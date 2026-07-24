@@ -23,15 +23,19 @@ def save_decks_index(index: dict[str, Any]):
         json.dump(index, f, indent=2)
 
 
-def update_deck_index(deck_name: str, num_cards: int, vibe: str = "", theme: str = ""):
+def update_deck_index(deck_name: str, num_cards: int, vibe: str = "", theme: str = "",
+                      *, back_image: str | None = None, back_prompt: str | None = None):
     index = load_decks_index()
+    existing = index.get(deck_name, {})
     index[deck_name] = {
         "name": deck_name,
         "num_cards": num_cards,
         "vibe": vibe,
         "theme": theme,
         "last_modified": datetime.now().isoformat(),
-        "created": index.get(deck_name, {}).get("created", datetime.now().isoformat()),
+        "created": existing.get("created", datetime.now().isoformat()),
+        "back_image": back_image or existing.get("back_image", ""),
+        "back_prompt": back_prompt or existing.get("back_prompt", ""),
     }
     save_decks_index(index)
 
@@ -66,6 +70,13 @@ def get_deck_info(deck_name: str):
 
     has_images = sum(1 for c in deck if c.image_path)
     print(f"Images generated: {has_images}/{len(deck)}")
+    index = load_decks_index()
+    deck_meta = index.get(deck_name, {})
+    back = deck_meta.get("back_image", "")
+    if back:
+        print(f"Card back: {back}")
+    else:
+        print("Card back: Not generated")
 
 
 # ==================== DECK LOADING / SAVING ====================

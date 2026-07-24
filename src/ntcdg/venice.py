@@ -252,3 +252,61 @@ def edit_image_with_venice(
     except Exception as e:
         logger.error(f"Image edit failed: {e}")
         return {"image_error": str(e)}
+
+# ==================== CARD BACK GENERATION ====================
+@retry_on_failure(max_retries=2, delay=2.0)
+def generate_card_back(
+    prompt: str,
+    api_key: str,
+    model: str,
+    deck_name: str,
+    image_size: str = "1024x1536",
+    negative_prompt: str = "",
+    rate_limit_delay: float = 1.5,
+) -> str:
+    """
+    Generate a single card back design image via Venice.
+
+    The back is a single design used for all cards in the deck.
+    Returns the path to the saved image, or "" on failure.
+    """
+    if not api_key or not requests:
+        logger.error("Missing API key or requests library")
+        return ""
+
+    time.sleep(rate_limit_delay)
+    neg = negative_prompt or Config.DEFAULT_NEGATIVE_PROMPT
+
+    try:
+        resp = requests.post(
+            Config.VENICE_IMAGE_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "prompt": prompt,
+                "negative_prompt": neg,
+                "n": 1,
+                "size": image_size,
+                "response_format": "b64_json",
+            },
+            timeout=180,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if data.get("data"):
+            b64 = data["data"][0].get("b64_json")
+            if b64:
+                os.makedirs(Config.IMAGES_DIR, exist_ok=True)
+                filename = f"{deck_name}_BACK.png"
+                filepath = os.path.join(Config.IMAGES_DIR, filename)
+                with open(filepath, "wb") as f:
+                    f.write(base64.b64decode(b64))
+                logger.info(f"Card back saved: {filepath}")
+                return filepath
+
+        logger.error("No image data in Venice response for card back")
+        return ""
+    except Exception as e:
+        logger.error(f"Card back generation failed: {e}")
+        return ""

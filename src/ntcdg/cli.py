@@ -8,6 +8,7 @@ from .config import Config, logger, setup_logging
 from .finalize import finalize_deck
 from .generator import generate_deck, review_existing_deck
 from .storage import get_deck_info, list_decks
+from .venice import generate_card_back
 
 
 def main():
@@ -51,6 +52,14 @@ def main():
     parser.add_argument(
         "--font", type=str, default=None,
         help="Path to a .ttf/.otf font file for card title and number overlay",
+    )
+    parser.add_argument(
+        "--back-prompt", type=str, default=None,
+        help="Prompt for card back design (used with --deck or --set-back)",
+    )
+    parser.add_argument(
+        "--set-back", type=str, default=None,
+        help="Generate/regenerate card back for an existing deck",
     )
 
     # Finalization options
@@ -100,6 +109,36 @@ def main():
             rate_limit=args.rate_limit,
             font_path=args.font,
         )
+    elif args.set_back:
+        if not args.back_prompt:
+            parser.error("--set-back requires --back-prompt")
+        if not venice_key:
+            parser.error("--set-back requires --venice-key or VENICE_API_KEY env var")
+        print(f"\nGenerating card back for {args.set_back}...")
+        back_path = generate_card_back(
+            prompt=args.back_prompt,
+            api_key=venice_key,
+            model=args.venice_image_model,
+            deck_name=args.set_back,
+            image_size=args.image_size,
+            negative_prompt=args.negative_prompt,
+            rate_limit_delay=args.rate_limit,
+        )
+        if back_path:
+            from .storage import load_decks_index, update_deck_index
+            idx = load_decks_index()
+            meta = idx.get(args.set_back, {})
+            update_deck_index(
+                args.set_back,
+                num_cards=meta.get("num_cards", 0),
+                vibe=meta.get("vibe", ""),
+                theme=meta.get("theme", ""),
+                back_image=back_path,
+                back_prompt=args.back_prompt,
+            )
+            print(f"Card back saved: {back_path}")
+        else:
+            print("Failed to generate card back.")
     elif args.finalize:
         finalize_deck(
             deck_name=args.finalize,

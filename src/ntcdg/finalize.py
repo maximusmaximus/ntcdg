@@ -308,6 +308,109 @@ def create_print_pdf(
     return pdf_path
 
 
+# ==================== CARD BACKS PDF ====================
+def create_backs_pdf(
+    num_cards: int,
+    deck_name: str,
+    back_image_path: str,
+    sheet_size: str = "letter",
+    color_mode: str = "color",
+) -> str:
+    """
+    Generate a print-ready PDF of card backs.
+
+    Same grid layout as the fronts PDF so pages align for
+    double-sided printing. The back image fills the entire
+    bleed area edge-to-edge (no borders). Crop marks are
+    included for cutting alignment.
+    """
+    if not HAS_REPORTLAB or not HAS_PILLOW:
+        logger.error("reportlab and Pillow required for backs PDF")
+        return ""
+
+    if not os.path.exists(back_image_path):
+        logger.error(f"Card back image not found: {back_image_path}")
+        return ""
+
+    sheet_w_in, sheet_h_in = SHEET_SIZES[sheet_size]
+    layout = _calculate_grid(sheet_w_in, sheet_h_in)
+
+    sheet_w = sheet_w_in * inch
+    sheet_h = sheet_h_in * inch
+
+    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+    pdf_path = os.path.join(
+        Config.OUTPUT_DIR,
+        f"{deck_name}_BACKS_{sheet_size}_{color_mode}.pdf",
+    )
+
+    c = pdf_canvas.Canvas(pdf_path, pagesize=(sheet_w, sheet_h))
+    c.setTitle(f"{deck_name} - Card Backs ({sheet_size.title()}, {color_mode.upper()} CMYK)")
+    c.setAuthor("NTCDG")
+
+    cards_per_page = layout["cards_per_page"]
+    total_pages = math.ceil(num_cards / cards_per_page)
+
+    tmp_dir = tempfile.mkdtemp(prefix="ntcdg_backs_")
+
+    try:
+        # Prepare the single back image (converted to CMYK)
+        back_img = _prepare_image(back_image_path, color_mode, tmp_dir)
+
+        for page_idx in range(total_pages):
+            remaining = num_cards - page_idx * cards_per_page
+            slots = min(cards_per_page, remaining)
+
+            for i in range(slots):
+                row = i // layout["cols"]
+                col = i % layout["cols"]
+
+                bleed_x_in = layout["start_x"] + col * (CARD_BLEED_W + CELL_GAP)
+                bleed_y_in = (
+                    sheet_h_in
+                    - layout["start_y"]
+                    - (row + 1) * CARD_BLEED_H
+                    - row * CELL_GAP
+                )
+
+                bleed_x = bleed_x_in * inch
+                bleed_y = bleed_y_in * inch
+
+                # Back image fills FULL bleed area (no borders)
+                c.drawImage(
+                    back_img,
+                    bleed_x,
+                    bleed_y,
+                    width=CARD_BLEED_W * inch,
+                    height=CARD_BLEED_H * inch,
+                    preserveAspectRatio=False,
+                )
+
+                # Crop marks for cutting alignment
+                trim_x = bleed_x + BLEED * inch
+                trim_y = bleed_y + BLEED * inch
+                _draw_crop_marks(c, trim_x, trim_y, CARD_TRIM_W * inch, CARD_TRIM_H * inch)
+
+            # Page footer
+            c.setFont("Helvetica", 7)
+            c.setFillColorCMYK(0, 0, 0, 0.5)
+            c.drawCentredString(
+                sheet_w / 2,
+                SHEET_MARGIN * inch * 0.4,
+                f"{deck_name} BACKS  -  Page {page_idx + 1}/{total_pages}  -  "
+                f"{sheet_size.title()}  -  {color_mode.upper()} CMYK",
+            )
+
+            c.showPage()
+
+        c.save()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    logger.info(f"Backs PDF saved: {pdf_path}")
+    return pdf_path
+
+
 # ==================== BOOKLET HELPERS ====================
 # Booklet page is the same size as a tarot card
 _BK_W = CARD_TRIM_W * 72  # page width in points (2.75")
@@ -670,10 +773,30 @@ def finalize_deck(
     print("Generating companion booklet...")
     booklet_path = create_booklet_pdf(deck, deck_name)
 
+    # --- Generate backs PDF (if back image exists) ---
+    from .storage import load_decks_index
+    deck_meta = load_decks_index().get(deck_name, {})
+    back_image = deck_meta.get("back_image", "")
+    backs_path = ""
+    if back_image and os.path.exists(back_image):
+        print("Generating card backs PDF...")
+        backs_path = create_backs_pdf(
+            num_cards=len(printable),
+            deck_name=deck_name,
+            back_image_path=back_image,
+            sheet_size=sheet_size,
+            color_mode=color_mode,
+        )
+    else:
+        print("No card back image found -- skipping backs PDF.")
+        print("   (Use --set-back DeckName --back-prompt '...' to generate one)")
+
     if pdf_path:
         print(f"\n{'=' * 60}")
         print(f"FINALIZED: {deck_name}")
         print(f"   Print PDF:  {pdf_path}")
+        if backs_path:
+            print(f"   Backs PDF:  {backs_path}")
         if booklet_path:
             print(f"   Booklet:    {booklet_path}")
         print(f"   Pages: {total_pages}")
