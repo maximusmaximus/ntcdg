@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ntcdg"
-version = "0.1.0"
+version = "0.2.0"
 description = "Novel Tarot Card Deck Generator with Venice.ai integration, TUI, proof sheets and interactive review"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,11 +36,12 @@ dependencies = [
 dev = [
     "ruff",
     "mypy",
+    "pytest",
 ]
 
 [project.scripts]
-ntcdg = "ntcdg_generator:main"
-ntcdg-tui = "tui:main"
+ntcdg = "ntcdg.cli:main"
+ntcdg-tui = "ntcdg.tui:main"
 
 [project.urls]
 Homepage = "https://github.com/maximusmaximus/ntcdg"
@@ -48,8 +49,7 @@ Repository = "https://github.com/maximusmaximus/ntcdg"
 Issues = "https://github.com/maximusmaximus/ntcdg/issues"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["ntcdg_generator*", "tui*"]
+where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.md", "*.txt", "LICENSE"]
+"*" = ["*.md", "*.txt", "*.json", "LICENSE"]

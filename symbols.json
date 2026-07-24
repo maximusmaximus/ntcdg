@@ -1,0 +1,18 @@
+{
+  "style_prompt": "psychedelic neon glitch vortex art, intricate Rider-Waite inspired linework, electric vivid colors, dramatic cinematic lighting",
+  "symbols": [
+    {"name": "loyal small dog", "description": "A small loyal dog gazing upward with devotion and soulful eyes"},
+    {"name": "psychedelic flowers", "description": "Vivid psychedelic flowers blooming with fractal petals and glowing pollen"},
+    {"name": "crescent moon", "description": "A luminous crescent moon radiating ethereal silver light"},
+    {"name": "scattered stars", "description": "Scattered stars twinkling with cosmic energy against deep space"},
+    {"name": "ornate ancient keys", "description": "Ornate ancient keys with intricate filigree and mystical engravings"},
+    {"name": "angel wings", "description": "Translucent angel wings with feathered luminescence and divine radiance"},
+    {"name": "winding path", "description": "A winding path dissolving into radiant golden light at the horizon"},
+    {"name": "glowing crown", "description": "A glowing crown emanating golden energy with embedded jewels"},
+    {"name": "subtle flames", "description": "Subtle flames or wisps of spiritual energy dancing upward"},
+    {"name": "flowing water", "description": "Flowing water or streams of liquid light cascading gently"},
+    {"name": "distant mountains", "description": "Distant mountains silhouetted against a mystical twilight sky"},
+    {"name": "fractal patterns", "description": "Intricate fractal patterns pulsing with bioluminescent energy"},
+    {"name": "glitch particles", "description": "Digital glitch particles dissolving into streams of data and light"}
+  ]
+}

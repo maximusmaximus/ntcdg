@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 NTCDG TUI - Full Text User Interface
 
@@ -10,36 +9,34 @@ Features implemented:
 - Settings screen
 - Quick proof sheet opening
 - New Deck dialog
-- Refresh after regeneration
 
-Run: python tui.py
+Run: ntcdg-tui  (or: python -m ntcdg.tui)
 Requires: pip install textual
 """
+
+import json
+import os
+import sys
+import subprocess
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import (
-    Header, Footer, DataTable, Button, Static, Input, Label, RadioSet, RadioButton
+    Header, Footer, DataTable, Button, Static, Input, Label, RadioSet, RadioButton,
 )
 from textual.screen import ModalScreen, Screen
 from textual.binding import Binding
-import json
-import os
-import subprocess
-from pathlib import Path
 
-# Import core generation functions
-try:
-    from ntcdg_generator import (
-        analyze_with_venice,
-        generate_image_with_venice,
-        load_custom_elements,
-        Config,
-    )
-    HAS_CORE = True
-except ImportError:
-    HAS_CORE = False
-    load_custom_elements = None
+from .config import setup_logging
+from .models import Card
+from .storage import (
+    load_deck, save_deck, load_decks_index,
+    update_deck_index, export_spreadsheet,
+)
+from .symbols import load_symbols_config
+from .venice import analyze_with_venice, generate_image_with_venice
+
 
 DECKS_DIR = Path("generated_decks")
 SETTINGS_FILE = DECKS_DIR / "ntcdg_settings.json"
@@ -54,8 +51,8 @@ def load_settings():
         "text_model": "llama-3.1-405b",
         "image_model": "venice-sd3",
         "image_size": "1024x1536",
-        "element_mode": "text",
-        "custom_elements_dir": "custom_elements",
+        "symbol_mode": "generate",
+        "symbols_file": "",
     }
 
 
@@ -63,28 +60,6 @@ def save_settings(settings: dict):
     DECKS_DIR.mkdir(parents=True, exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(settings, f, indent=2)
-
-
-def load_decks_index():
-    index_file = DECKS_DIR / "decks_index.json"
-    if index_file.exists():
-        with open(index_file) as f:
-            return json.load(f)
-    return {}
-
-
-def load_deck(name: str):
-    path = DECKS_DIR / f"{name}.json"
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    return []
-
-
-def save_deck(name: str, deck: list):
-    path = DECKS_DIR / f"{name}.json"
-    with open(path, "w") as f:
-        json.dump(deck, f, indent=2)
 
 
 class DeckListScreen(Screen):
@@ -168,14 +143,11 @@ class DeckDetailScreen(Screen):
         table.add_columns("Pos", "Title", "Type", "Image")
         self.filtered = [
             c for c in self.deck
-            if filter_text.lower() in (c.get("venice_title") or c.get("title", "")).lower()
+            if filter_text.lower() in c.display_title().lower()
         ]
-        for card in sorted(self.filtered, key=lambda x: x.get("position", 0)):
-            pos = card.get("position", "?")
-            title = card.get("venice_title") or card.get("title", "Untitled")
-            ctype = card.get("type", "")
-            has_img = "Yes" if card.get("image_path") else "No"
-            table.add_row(str(pos), title, ctype, has_img)
+        for card in sorted(self.filtered, key=lambda c: c.position):
+            has_img = "Yes" if card.image_path else "No"
+            table.add_row(str(card.position), card.display_title(), card.card_type, has_img)
 
     def on_input_changed(self, event: Input.Changed):
         if event.input.id == "filter":
@@ -201,7 +173,9 @@ class DeckDetailScreen(Screen):
         if event.button.id == "edit":
             self.app.push_screen(CardEditorScreen(self.deck_name, pos))
         elif event.button.id == "regenerate":
-            self.app.push_screen(RegenerateDialog(self.deck_name, [pos], on_complete=self.reload_deck))
+            self.app.push_screen(
+                RegenerateDialog(self.deck_name, [pos], on_complete=self.reload_deck)
+            )
 
     def open_proof_sheet(self):
         pdf_path = DECKS_DIR / f"{self.deck_name}_PROOF_SHEET.pdf"
@@ -223,14 +197,14 @@ class CardEditorScreen(ModalScreen):
         self.deck_name = deck_name
         self.position = position
         self.deck = load_deck(deck_name)
-        self.card = next((c for c in self.deck if c.get("position") == position), {})
+        self.card = next((c for c in self.deck if c.position == position), Card())
 
     def compose(self) -> ComposeResult:
         yield Label(f"Editing Card #{self.position}")
-        yield Input(value=self.card.get("venice_title") or self.card.get("title", ""), id="title")
-        yield Input(value=self.card.get("description", ""), id="description")
-        yield Input(value=self.card.get("upright_interpretation", ""), id="upright")
-        yield Input(value=self.card.get("reversed_interpretation", ""), id="reversed")
+        yield Input(value=self.card.display_title(), id="title")
+        yield Input(value=self.card.description or "", id="description")
+        yield Input(value=self.card.upright_interpretation or "", id="upright")
+        yield Input(value=self.card.reversed_interpretation or "", id="reversed")
         yield Horizontal(
             Button("Save", id="save"),
             Button("Cancel", id="cancel"),
@@ -239,13 +213,13 @@ class CardEditorScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "save":
             for card in self.deck:
-                if card.get("position") == self.position:
-                    card["venice_title"] = self.query_one("#title", Input).value
-                    card["description"] = self.query_one("#description", Input).value
-                    card["upright_interpretation"] = self.query_one("#upright", Input).value
-                    card["reversed_interpretation"] = self.query_one("#reversed", Input).value
+                if card.position == self.position:
+                    card.venice_title = self.query_one("#title", Input).value
+                    card.description = self.query_one("#description", Input).value
+                    card.upright_interpretation = self.query_one("#upright", Input).value
+                    card.reversed_interpretation = self.query_one("#reversed", Input).value
                     break
-            save_deck(self.deck_name, self.deck)
+            save_deck(self.deck, self.deck_name)
             self.dismiss()
             self.app.notify("Card saved!")
         elif event.button.id == "cancel":
@@ -273,37 +247,42 @@ class RegenerateDialog(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "start":
-            if not HAS_CORE:
-                self.app.notify("Core module not found.")
-                self.dismiss()
-                return
             radio = self.query_one(RadioSet)
             choice = radio.pressed_button.id if radio.pressed_button else "both"
             regenerate_text = choice in ["text", "both"]
             regenerate_images = choice in ["images", "both"]
+
             settings = load_settings()
             venice_key = settings.get("venice_api_key") or os.getenv("VENICE_API_KEY")
             if not venice_key:
                 self.app.notify("No Venice API key found!")
                 self.dismiss()
                 return
+
             deck = load_deck(self.deck_name)
             if not deck:
                 self.app.notify("Could not load deck.")
                 self.dismiss()
                 return
-            success_count = 0
+
             text_model = settings.get("text_model", "llama-3.1-405b")
             image_model = settings.get("image_model", "venice-sd3")
             image_size = settings.get("image_size", "1024x1536")
-            element_mode = settings.get("element_mode", "text")
-            custom_dir = settings.get("custom_elements_dir", "custom_elements")
-            custom_elements = {}
-            if element_mode == "custom" and load_custom_elements:
-                custom_elements = load_custom_elements(custom_dir)
+            symbol_mode = settings.get("symbol_mode", "generate")
+            symbols_file = settings.get("symbols_file", "")
+
+            # Load symbol images for provide mode
+            symbol_images = {}
+            if symbol_mode == "provide":
+                symbols_config = load_symbols_config(symbols_file if symbols_file else None)
+                for s in symbols_config.get("symbols", []):
+                    if s.get("image") and os.path.exists(str(s["image"])):
+                        symbol_images[s["name"]] = s["image"]
+
             self.notify("Regenerating...")
+            success_count = 0
             for pos in self.positions:
-                card = next((c for c in deck if c.get("position") == pos), None)
+                card = next((c for c in deck if c.position == pos), None)
                 if not card:
                     continue
                 try:
@@ -316,15 +295,16 @@ class RegenerateDialog(ModalScreen):
                         img_result = generate_image_with_venice(
                             card, venice_key, image_model,
                             image_size=image_size,
-                            element_mode=element_mode,
-                            custom_elements=custom_elements
+                            symbol_mode=symbol_mode,
+                            symbol_images=symbol_images,
                         )
                         if img_result.get("image_path"):
                             card.update(img_result)
                             success_count += 1
                 except Exception as e:
                     self.app.notify(f"Error on card {pos}: {str(e)[:80]}")
-            save_deck(self.deck_name, deck)
+
+            save_deck(deck, self.deck_name)
             self.app.notify(f"Regeneration complete! Updated {success_count} operation(s).")
             self.dismiss()
             if self.on_complete:
@@ -343,8 +323,10 @@ class NewDeckDialog(ModalScreen):
         yield Input(value="78", id="num_cards")
         yield Label("Deck Theme / Prompt")
         yield Input(value="cyber-psychedelic journey", id="deck_prompt")
-        yield Label(f"Element Mode (current: {settings.get('element_mode', 'text')})")
-        yield Input(value=settings.get("element_mode", "text"), id="element_mode")
+        yield Label(f"Symbol Mode (current: {settings.get('symbol_mode', 'generate')})")
+        yield Input(value=settings.get("symbol_mode", "generate"), id="symbol_mode")
+        yield Label("Symbols File (optional path to symbols.json)")
+        yield Input(value=settings.get("symbols_file", ""), id="symbols_file")
         yield Horizontal(
             Button("Generate", id="generate"),
             Button("Cancel", id="cancel"),
@@ -361,19 +343,20 @@ class NewDeckDialog(ModalScreen):
             except ValueError:
                 num_cards = 78
             prompt = self.query_one("#deck_prompt", Input).value.strip()
-            mode = self.query_one("#element_mode", Input).value.strip().lower()
-            if mode not in ("text", "custom"):
-                mode = "text"
-            settings = load_settings()
-            custom_dir = settings.get("custom_elements_dir", "custom_elements")
+            mode = self.query_one("#symbol_mode", Input).value.strip().lower()
+            if mode not in ("generate", "provide"):
+                mode = "generate"
+            symbols_file = self.query_one("#symbols_file", Input).value.strip()
+
             cmd = [
-                "python", "ntcdg_generator.py",
+                sys.executable, "-m", "ntcdg.cli",
                 "--deck", "--name", name, "--cards", str(num_cards),
-                "--deck-prompt", prompt, "--element-mode", mode,
+                "--deck-prompt", prompt, "--symbol-mode", mode,
                 "--analyze", "--generate-images",
             ]
-            if mode == "custom":
-                cmd.extend(["--custom-elements-dir", custom_dir])
+            if symbols_file:
+                cmd.extend(["--symbols-file", symbols_file])
+
             self.notify(f"Starting generation of '{name}'...")
             try:
                 subprocess.Popen(cmd)
@@ -387,7 +370,7 @@ class SettingsScreen(Screen):
     def compose(self) -> ComposeResult:
         settings = load_settings()
         yield Header("NTCDG Settings")
-        yield Label("Venice API Key (optional - can also use env var)")
+        yield Label("Venice API Key (optional — can also use env var)")
         yield Input(value=settings.get("venice_api_key", ""), id="api_key", password=True)
         yield Label("Default Text Model")
         yield Input(value=settings.get("text_model", "llama-3.1-405b"), id="text_model")
@@ -395,10 +378,10 @@ class SettingsScreen(Screen):
         yield Input(value=settings.get("image_model", "venice-sd3"), id="image_model")
         yield Label("Default Image Size")
         yield Input(value=settings.get("image_size", "1024x1536"), id="image_size")
-        yield Label("Element Mode (text or custom)")
-        yield Input(value=settings.get("element_mode", "text"), id="element_mode")
-        yield Label("Custom Elements Directory")
-        yield Input(value=settings.get("custom_elements_dir", "custom_elements"), id="custom_elements_dir")
+        yield Label("Symbol Mode (generate or provide)")
+        yield Input(value=settings.get("symbol_mode", "generate"), id="symbol_mode")
+        yield Label("Symbols File (path to symbols.json, optional)")
+        yield Input(value=settings.get("symbols_file", ""), id="symbols_file")
         yield Horizontal(
             Button("Save Settings", id="save"),
             Button("Back", id="back"),
@@ -407,16 +390,16 @@ class SettingsScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "save":
-            mode = self.query_one("#element_mode", Input).value.strip().lower()
-            if mode not in ("text", "custom"):
-                mode = "text"
+            mode = self.query_one("#symbol_mode", Input).value.strip().lower()
+            if mode not in ("generate", "provide"):
+                mode = "generate"
             new_settings = {
                 "venice_api_key": self.query_one("#api_key", Input).value,
                 "text_model": self.query_one("#text_model", Input).value,
                 "image_model": self.query_one("#image_model", Input).value,
                 "image_size": self.query_one("#image_size", Input).value,
-                "element_mode": mode,
-                "custom_elements_dir": self.query_one("#custom_elements_dir", Input).value.strip() or "custom_elements",
+                "symbol_mode": mode,
+                "symbols_file": self.query_one("#symbols_file", Input).value.strip(),
             }
             save_settings(new_settings)
             self.app.notify("Settings saved successfully!")
@@ -433,9 +416,15 @@ class NTCDGApp(App):
         Binding("q", "quit", "Quit"),
         Binding("d", "toggle_dark", "Dark Mode"),
     ]
+
     def on_mount(self):
         self.push_screen(DeckListScreen())
 
 
-if __name__ == "__main__":
+def main():
+    setup_logging()
     NTCDGApp().run()
+
+
+if __name__ == "__main__":
+    main()
