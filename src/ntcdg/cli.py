@@ -5,6 +5,7 @@ import os
 import re
 
 from .config import Config, logger, setup_logging
+from .finalize import finalize_deck
 from .generator import generate_deck, review_existing_deck
 from .storage import get_deck_info, list_decks
 
@@ -16,6 +17,8 @@ def main():
 
     parser.add_argument("--deck", action="store_true", help="Generate a new deck")
     parser.add_argument("--review-existing", type=str, default=None, help="Review an existing deck")
+    parser.add_argument("--finalize", type=str, default=None,
+                        help="Finalize a deck for print (generates print-ready PDF)")
     parser.add_argument("--list-decks", action="store_true", help="List all decks")
     parser.add_argument("--deck-info", type=str, default=None, help="Show info about a deck")
 
@@ -48,6 +51,18 @@ def main():
     parser.add_argument(
         "--font", type=str, default=None,
         help="Path to a .ttf/.otf font file for card title and number overlay",
+    )
+
+    # Finalization options
+    parser.add_argument(
+        "--sheet-size", type=str, default="letter",
+        choices=["letter", "tabloid"],
+        help="Print sheet size: 'letter' (8.5x11) or 'tabloid' (11x17)",
+    )
+    parser.add_argument(
+        "--color-mode", type=str, default="color",
+        choices=["color", "bw"],
+        help="Print color mode: 'color' or 'bw' (both output as CMYK)",
     )
 
     args = parser.parse_args()
@@ -84,6 +99,12 @@ def main():
             negative_prompt=args.negative_prompt,
             rate_limit=args.rate_limit,
             font_path=args.font,
+        )
+    elif args.finalize:
+        finalize_deck(
+            deck_name=args.finalize,
+            sheet_size=args.sheet_size,
+            color_mode=args.color_mode,
         )
     elif args.deck:
         generate_deck(
