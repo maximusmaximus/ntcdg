@@ -1,18 +1,19 @@
 """Venice.ai API integration: text analysis, image generation, and image editing."""
 
-import re
-import os
-import time
 import base64
-from typing import Dict, Any
+import contextlib
+import os
+import re
+import time
+from typing import Any
 
-from .config import Config, logger, retry_on_failure, requests
+from .config import Config, logger, requests, retry_on_failure
 from .models import Card
 
 
 # ==================== TEXT ANALYSIS ====================
 @retry_on_failure(max_retries=2, delay=1.5)
-def analyze_with_venice(card: Card, api_key: str, model: str) -> Dict[str, Any]:
+def analyze_with_venice(card: Card, api_key: str, model: str) -> dict[str, Any]:
     """Analyze a card with Venice text model, returning enrichment fields."""
     if not api_key or not requests:
         return {"venice_error": "Missing API key or requests library"}
@@ -76,8 +77,8 @@ def generate_image_with_venice(
     negative_prompt: str = "",
     rate_limit_delay: float = 1.5,
     symbol_mode: str = "generate",
-    symbol_images: Dict[str, str] = None,
-) -> Dict[str, Any]:
+    symbol_images: dict[str, str] = None,
+) -> dict[str, Any]:
     """Generate a card image via Venice. Returns a dict of result fields."""
     if not api_key or not requests:
         return {"image_error": "Missing API key or requests"}
@@ -106,7 +107,7 @@ def generate_image_with_venice(
             resp.raise_for_status()
             data = resp.json()
 
-            if "data" in data and data["data"]:
+            if data.get("data"):
                 b64 = data["data"][0].get("b64_json")
                 if b64:
                     img_data = base64.b64decode(b64)
@@ -168,10 +169,8 @@ def generate_image_with_venice(
                     model="firered-image-edit", image_size=image_size,
                 )
                 if edit_result.get("image_path"):
-                    try:
+                    with contextlib.suppress(OSError):
                         os.remove(temp_path)
-                    except OSError:
-                        pass
                     return {
                         "image_path": edit_result["image_path"],
                         "image_model": model,
@@ -206,7 +205,7 @@ def edit_image_with_venice(
     model: str = "firered-image-edit",
     image_size: str = "1024x1536",
     rate_limit_delay: float = 2.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Use Venice's /image/edit endpoint to modify an existing image
     based on text instructions (great for injecting custom hand-drawn elements).
@@ -235,7 +234,7 @@ def edit_image_with_venice(
         resp.raise_for_status()
         data = resp.json()
 
-        if "data" in data and data["data"]:
+        if data.get("data"):
             b64 = data["data"][0].get("b64_json")
             if b64:
                 img_data = base64.b64decode(b64)

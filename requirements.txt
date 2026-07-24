@@ -1,6 +1,7 @@
-requests
-pandas
-openpyxl
-reportlab
-tqdm
-textual
+# Core dependencies — kept in sync with pyproject.toml
+requests>=2.31.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+reportlab>=4.0.0
+tqdm>=4.66.0
+textual>=0.40.0

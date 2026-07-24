@@ -1,19 +1,19 @@
 """Symbol configuration loading and cohesive image generation."""
 
+import base64
 import json
 import os
 import time
-import base64
-from typing import Dict, Any, Optional
+from typing import Any
 
-from .config import Config, logger, retry_on_failure, requests, HAS_TQDM
+from .config import HAS_TQDM, Config, logger, requests, retry_on_failure
 
 if HAS_TQDM:
     from tqdm import tqdm
 
 
 # ==================== SYMBOL CONFIGURATION ====================
-def load_symbols_config(symbols_file: str = None) -> Dict[str, Any]:
+def load_symbols_config(symbols_file: str = None) -> dict[str, Any]:
     """
     Load symbol definitions from a JSON file.
 
@@ -67,13 +67,13 @@ def load_symbols_config(symbols_file: str = None) -> Dict[str, Any]:
 
 
 def generate_symbol_images(
-    symbols_config: Dict[str, Any],
+    symbols_config: dict[str, Any],
     deck_name: str,
     deck_prompt: str,
     api_key: str,
     image_model: str,
     rate_limit: float = 1.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate cohesive symbol reference images for every symbol that lacks an image.
     Uses a shared style prompt so all generated symbols match visually.
@@ -152,7 +152,7 @@ def _generate_single_symbol(
     api_key: str,
     model: str,
     rate_limit: float,
-) -> Optional[str]:
+) -> str | None:
     """Generate a single symbol image via Venice."""
     if not api_key or not requests:
         return None
@@ -175,7 +175,7 @@ def _generate_single_symbol(
     resp.raise_for_status()
     data = resp.json()
 
-    if "data" in data and data["data"]:
+    if data.get("data"):
         b64 = data["data"][0].get("b64_json")
         if b64:
             safe_name = name.replace(" ", "_").replace("/", "-")[:30]

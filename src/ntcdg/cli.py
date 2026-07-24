@@ -1,12 +1,12 @@
 """CLI entry point for NTCDG."""
 
+import argparse
 import os
 import re
-import argparse
 
-from .config import Config, setup_logging, logger
-from .storage import list_decks, get_deck_info
+from .config import Config, logger, setup_logging
 from .generator import generate_deck, review_existing_deck
+from .storage import get_deck_info, list_decks
 
 
 def main():

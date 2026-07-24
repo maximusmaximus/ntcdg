@@ -1,27 +1,25 @@
-# NTCDG - Novel Tarot Card Deck Generator
+# NTCDG — Novel Tarot Card Deck Generator
 
-A clean, modular Python tool to generate unique psychedelic/glitch/vortex tarot-style decks with Venice.ai integration.
+A modular Python tool for generating unique psychedelic/glitch/vortex tarot-style decks with [Venice.ai](https://venice.ai) integration.
 
 ## Features
 
-- Generate full 78-card decks with custom themes
-- Venice.ai powered text analysis (title, description, upright/reversed meanings)
-- Venice.ai image generation for card artwork
-- Selectable models for text and images
-- Automatic multi-page PDF proof sheet with card thumbnails
-- Interactive review: select cards to regenerate (text/images/both)
-- Review and edit existing decks
-- Deck management (list, info)
-- Modern TUI for browsing and editing decks
-- Master spreadsheet export
-- Progress bars, logging, and rate limiting
+- **Full 78-card canonical decks** — 22 Major Arcana + 56 Minor Arcana, zero duplicates
+- **Venice.ai text analysis** — titles, descriptions, upright/reversed meanings
+- **Venice.ai image generation** — card artwork with cohesive visual style
+- **User-defined symbols** — provide your own images or let AI generate them cohesively
+- **Multi-page PDF proof sheets** — paginated card thumbnails for review
+- **Interactive review** — select cards to regenerate (text / images / both)
+- **Modern TUI** — browse, edit, and regenerate decks from a terminal UI
+- **Master spreadsheet export** — `.xlsx` with all card data
+- **Progress bars, logging, rate limiting** — production-ready generation pipeline
 
 ## Installation
 
 ```bash
 git clone https://github.com/maximusmaximus/ntcdg.git
 cd ntcdg
-pip install -r requirements.txt
+pip install -e .
 ```
 
 Set your Venice API key:
@@ -30,107 +28,118 @@ Set your Venice API key:
 export VENICE_API_KEY="sk-..."
 ```
 
-## Usage
+## Quick Start
 
-### Generate a new deck
+### Generate a deck (CLI)
 
 ```bash
-python ntcdg_generator.py --deck --name MyPsycheDeck --cards 78 \
+ntcdg --deck --name MyPsycheDeck --cards 78 \
   --analyze --generate-images \
   --deck-prompt "A cyber-psychedelic journey through digital mysticism"
-```
-
-### Review an existing deck
-
-```bash
-python ntcdg_generator.py --review-existing MyPsycheDeck
-```
-
-### List decks
-
-```bash
-python ntcdg_generator.py --list-decks
 ```
 
 ### Launch the TUI
 
 ```bash
-python tui.py
+ntcdg-tui
 ```
 
-**TUI features:**
-- Browse and search existing decks
-- Open a deck → Edit cards, Regenerate (text / images / both), Refresh, open Proof Sheet
-- **New Deck** button to start generation from the TUI
-- Settings panel (API key, models, Element Mode, Custom Elements directory)
+### Other commands
+
+```bash
+ntcdg --list-decks                    # List all generated decks
+ntcdg --deck-info MyPsycheDeck        # Show deck details
+ntcdg --review-existing MyPsycheDeck  # Interactive review + regeneration
+```
+
+## Symbol System
+
+NTCDG supports two modes for the recurring symbols that appear across your deck:
+
+### Generate Mode (default)
+
+AI generates all symbol artwork **before** card generation begins, using a shared style prompt so every symbol has a cohesive visual identity.
+
+```bash
+ntcdg --deck --name MyDeck --cards 78 \
+  --symbols-file symbols.json \
+  --analyze --generate-images
+```
+
+### Provide Mode
+
+Supply your own images for each symbol. The system generates base cards then uses Venice's Edit API to inject your art style.
+
+```bash
+ntcdg --deck --name MyDeck --cards 78 \
+  --symbol-mode provide \
+  --symbols-file my_symbols.json \
+  --analyze --generate-images
+```
+
+### symbols.json format
+
+```json
+{
+  "style_prompt": "psychedelic neon glitch vortex art, intricate linework",
+  "symbols": [
+    {"name": "loyal small dog", "description": "A small loyal dog gazing upward"},
+    {"name": "crescent moon", "description": "A luminous crescent moon", "image": "assets/moon.png"}
+  ]
+}
+```
+
+- `style_prompt` — shared visual style for AI-generated symbols
+- `symbols[].name` — symbol name (used in card prompts)
+- `symbols[].description` — detailed description for image generation
+- `symbols[].image` — (optional) path to your own image; required in `provide` mode
+
+An example `symbols.json` is included in the repo.
 
 ## Project Structure
 
 ```
 ntcdg/
-├── ntcdg_generator.py   # Main CLI generator
-├── tui.py               # Textual TUI for deck management
-├── requirements.txt
-└── README.md
+├── src/ntcdg/
+│   ├── __init__.py       # Package init (v0.2.0)
+│   ├── models.py         # Card dataclass
+│   ├── config.py         # Config, dependencies, retry logic
+│   ├── storage.py        # Deck load/save, index, spreadsheet
+│   ├── symbols.py        # Symbol config + cohesive generation
+│   ├── venice.py         # Venice API (text/image/edit)
+│   ├── generator.py      # Deck generation, proof sheets, review
+│   ├── cli.py            # CLI entry point
+│   └── tui.py            # Textual TUI
+├── tests/
+│   └── test_models.py    # Card model + canonical deck tests
+├── symbols.json          # Example symbol definitions
+└── pyproject.toml        # Package config + console scripts
 ```
-
-## Using Custom Hand-Drawn Elements
-
-NTCDG supports two generation modes:
-
-### 1. Text Mode (Default)
-Fully AI-generated cards using Venice.
-
-### 2. Custom Elements Mode
-Use your own hand-drawn images for recurring symbols (dog, flowers, moon, keys, etc.).
-
-**How to use:**
-
-1. Create a folder with your transparent PNG elements:
-   ```
-   my_elements/
-   ├── loyal_small_dog.png
-   ├── psychedelic_flowers.png
-   ├── crescent_moon.png
-   ├── ornate_ancient_keys.png
-   └── elements_config.json   # optional but recommended
-   ```
-
-2. (Recommended) Create an `elements_config.json` for explicit control:
-   ```json
-   {
-     "loyal small dog gazing upward": "loyal_small_dog.png",
-     "psychedelic flowers blooming": "psychedelic_flowers.png",
-     "crescent moon": "crescent_moon.png",
-     "ornate ancient keys": "ornate_ancient_keys.png"
-   }
-   ```
-
-3. Generate with:
-   ```bash
-   python ntcdg_generator.py --deck --name MyDeck \
-     --element-mode custom \
-     --custom-elements-dir ./my_elements \
-     --analyze --generate-images
-   ```
-
-The system generates base cards then uses Venice's Edit API to redraw the matched symbols while preserving overall style.
-
-You can also set **Element Mode = custom** and the directory path in the TUI under **Settings**.
 
 ## Dependencies
 
-See the header in `ntcdg_generator.py` for full details. Main optional packages:
+All dependencies are managed via `pyproject.toml`. Install with `pip install -e .`:
 
-- `requests` - Venice.ai API
-- `pandas` + `openpyxl` - Spreadsheet export
-- `reportlab` - PDF proof sheets
-- `tqdm` - Progress bars
-- `textual` - TUI (for `tui.py`)
+| Package | Purpose |
+|---------|---------|
+| `requests` | Venice.ai API calls |
+| `pandas` + `openpyxl` | Spreadsheet export |
+| `reportlab` | PDF proof sheets |
+| `tqdm` | Progress bars |
+| `textual` | TUI |
+
+Dev dependencies (`pip install -e ".[dev]"`): `pytest`, `ruff`, `mypy`
+
+## Running Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
 
 ## License
 
-MIT (or your preferred license)
+MIT
 
 ---
 

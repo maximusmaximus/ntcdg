@@ -39,3 +39,9 @@ ntcdg_*.log
 # Secrets
 .env
 *.key
+
+# Testing
+.pytest_cache/
+
+# Package build artifacts
+src/*.egg-info/

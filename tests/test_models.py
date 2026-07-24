@@ -1,7 +1,7 @@
 """Tests for the Card data model."""
 
-from ntcdg.models import Card
 from ntcdg.generator import build_canonical_deck
+from ntcdg.models import Card
 
 
 class TestCard:

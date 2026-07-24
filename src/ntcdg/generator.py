@@ -3,12 +3,12 @@
 import os
 import random
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Any
 
-from .config import Config, logger, HAS_TQDM, HAS_REPORTLAB
+from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
-from .storage import load_deck, save_deck, load_history
-from .symbols import load_symbols_config, generate_symbol_images
+from .storage import load_deck, save_deck
+from .symbols import generate_symbol_images, load_symbols_config
 from .venice import analyze_with_venice, generate_image_with_venice
 
 if HAS_TQDM:
@@ -16,7 +16,7 @@ if HAS_TQDM:
 
 
 # ==================== CANONICAL DECK STRUCTURE ====================
-def build_canonical_deck(num_cards: int = 78) -> List[Dict[str, Any]]:
+def build_canonical_deck(num_cards: int = 78) -> list[dict[str, Any]]:
     """
     Build the canonical tarot deck structure (22 Major + 56 Minor Arcana).
     Returns a list of card definition dicts with type/title/suit/rank.
@@ -70,10 +70,10 @@ def build_canonical_deck(num_cards: int = 78) -> List[Dict[str, Any]]:
 def generate_card(
     position: int,
     total: int,
-    card_def: Dict[str, Any],
+    card_def: dict[str, Any],
     deck_vibe: str,
     deck_prompt: str = "",
-    symbols: List[Dict[str, Any]] = None,
+    symbols: list[dict[str, Any]] = None,
 ) -> Card:
     """
     Enrich a card definition with symbols, layout, and prompt.
@@ -153,18 +153,25 @@ def build_card_prompt(card: Card) -> str:
 
 
 # ==================== PROOF SHEET (PDF) ====================
-def create_proof_sheet_pdf(deck: List[Card], deck_name: str) -> str:
+def create_proof_sheet_pdf(deck: list[Card], deck_name: str) -> str:
     if not HAS_REPORTLAB:
         logger.warning("reportlab not installed. Cannot generate PDF proof sheet.")
         return ""
 
-    from reportlab.platypus import PageBreak
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        Image,
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
 
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
     pdf_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}_PROOF_SHEET.pdf")
@@ -243,9 +250,9 @@ def create_proof_sheet_pdf(deck: List[Card], deck_name: str) -> str:
 
 # ==================== INTERACTIVE REVIEW ====================
 def interactive_review(
-    deck: List[Card],
+    deck: list[Card],
     deck_name: str,
-    venice_key: Optional[str],
+    venice_key: str | None,
     text_model: str,
     image_model: str,
     image_size: str,
@@ -318,7 +325,7 @@ def interactive_review(
 
 def review_existing_deck(
     deck_name: str,
-    venice_key: Optional[str],
+    venice_key: str | None,
     text_model: str,
     image_model: str,
     image_size: str,
@@ -341,9 +348,9 @@ def review_existing_deck(
 def generate_deck(
     name: str,
     num_cards: int,
-    vibe: Optional[str],
+    vibe: str | None,
     deck_prompt: str,
-    venice_key: Optional[str],
+    venice_key: str | None,
     analyze: bool,
     text_model: str,
     generate_images: bool,
@@ -390,7 +397,7 @@ def generate_deck(
         f"{sum(1 for c in card_defs if c['type'] == 'Minor Arcana')} Minor Arcana"
     )
 
-    deck: List[Card] = []
+    deck: list[Card] = []
     stats = {"venice_success": 0, "venice_fail": 0, "image_success": 0, "image_fail": 0}
 
     iterator = range(len(card_defs))

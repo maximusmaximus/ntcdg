@@ -1,13 +1,10 @@
 """Configuration, optional dependencies, and shared utilities for NTCDG."""
 
-import os
-import re
-import json
+import contextlib
 import logging
+import os
 import time
-import base64
 from datetime import datetime
-from typing import Dict, List, Any, Optional
 from functools import wraps
 
 # --- Optional Dependencies (graceful fallback) ---
@@ -30,15 +27,22 @@ except ImportError:
     pd = None
 
 try:
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer,
-        Image as RLImage, Table, TableStyle, PageBreak,
-    )
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        Image as RLImage,
+    )
+    from reportlab.platypus import (
+        PageBreak,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -70,7 +74,7 @@ class Config:
     # Default symbol definitions — used when no symbols.json is provided
     DEFAULT_SYMBOLS = [
         {"name": "loyal small dog", "description": "A small loyal dog gazing upward with devotion"},
-        {"name": "psychedelic flowers", "description": "Vivid psychedelic flowers blooming with fractal petals"},
+        {"name": "psychedelic flowers", "description": "Vivid psychedelic flowers with fractal petals"},
         {"name": "crescent moon", "description": "A luminous crescent moon radiating ethereal light"},
         {"name": "scattered stars", "description": "Scattered stars twinkling with cosmic energy"},
         {"name": "ornate ancient keys", "description": "Ornate ancient keys with intricate filigree"},
@@ -124,24 +128,48 @@ logger = logging.getLogger("NTCDG")
 
 
 # ==================== RETRY DECORATOR ====================
-def retry_on_failure(max_retries: int = 2, delay: float = 1.5):
-    """Simple retry decorator for Venice API calls."""
+def retry_on_failure(max_retries: int = 2, delay: float = 1.5, backoff: float = 2.0):
+    """
+    Retry decorator with exponential backoff and 429 rate-limit handling.
+
+    Args:
+        max_retries: Maximum number of retry attempts.
+        delay: Initial delay in seconds between retries.
+        backoff: Multiplier applied to delay after each retry.
+    """
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             last_exception = None
+            current_delay = delay
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
+
+                    # Handle 429 rate-limit: respect Retry-After header
+                    resp = getattr(e, "response", None)
+                    if resp is not None and getattr(resp, "status_code", 0) == 429:
+                        retry_after = resp.headers.get("Retry-After")
+                        if retry_after:
+                            with contextlib.suppress(ValueError, TypeError):
+                                current_delay = max(float(retry_after), current_delay)
+                            logger.warning(
+                                f"{func.__name__} rate-limited (429). "
+                                f"Waiting {current_delay:.1f}s..."
+                            )
+
                     if attempt < max_retries:
                         logger.warning(
                             f"{func.__name__} failed (attempt {attempt+1}/{max_retries+1}). "
-                            f"Retrying in {delay}s..."
+                            f"Retrying in {current_delay:.1f}s..."
                         )
-                        time.sleep(delay)
-            logger.error(f"{func.__name__} failed after {max_retries+1} attempts: {last_exception}")
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+            logger.error(
+                f"{func.__name__} failed after {max_retries+1} attempts: {last_exception}"
+            )
             raise last_exception
         return wrapper
     return decorator

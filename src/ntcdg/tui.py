@@ -16,27 +16,35 @@ Requires: pip install textual
 
 import json
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import (
-    Header, Footer, DataTable, Button, Static, Input, Label, RadioSet, RadioButton,
-)
-from textual.screen import ModalScreen, Screen
 from textual.binding import Binding
+from textual.containers import Horizontal
+from textual.screen import ModalScreen, Screen
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    Label,
+    RadioButton,
+    RadioSet,
+)
+from textual.worker import work
 
 from .config import setup_logging
 from .models import Card
 from .storage import (
-    load_deck, save_deck, load_decks_index,
-    update_deck_index, export_spreadsheet,
+    load_deck,
+    load_decks_index,
+    save_deck,
 )
 from .symbols import load_symbols_config
 from .venice import analyze_with_venice, generate_image_with_venice
-
 
 DECKS_DIR = Path("generated_decks")
 SETTINGS_FILE = DECKS_DIR / "ntcdg_settings.json"
@@ -352,18 +360,31 @@ class NewDeckDialog(ModalScreen):
                 sys.executable, "-m", "ntcdg.cli",
                 "--deck", "--name", name, "--cards", str(num_cards),
                 "--deck-prompt", prompt, "--symbol-mode", mode,
-                "--analyze", "--generate-images",
+                "--analyze", "--generate-images", "--no-interactive",
             ]
             if symbols_file:
                 cmd.extend(["--symbols-file", symbols_file])
 
-            self.notify(f"Starting generation of '{name}'...")
-            try:
-                subprocess.Popen(cmd)
-                self.app.notify(f"Deck generation started for '{name}'.")
-            except Exception as e:
-                self.app.notify(f"Failed to start generation: {e}")
+            self.app.notify(f"⏳ Generating '{name}' in background...")
+            self._run_generation(cmd, name)
             self.dismiss()
+
+    @work(thread=True, exclusive=True, group="generation")
+    def _run_generation(self, cmd: list, deck_name: str):
+        """Run deck generation in a background thread with completion feedback."""
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=3600,
+            )
+            if result.returncode == 0:
+                self.app.notify(f"✅ Deck '{deck_name}' generated successfully!")
+            else:
+                error_msg = (result.stderr or result.stdout or "Unknown error")[-200:]
+                self.app.notify(f"❌ Generation failed: {error_msg}")
+        except subprocess.TimeoutExpired:
+            self.app.notify(f"⏰ Generation of '{deck_name}' timed out (1 hour).")
+        except Exception as e:
+            self.app.notify(f"❌ Generation error: {str(e)[:200]}")
 
 
 class SettingsScreen(Screen):

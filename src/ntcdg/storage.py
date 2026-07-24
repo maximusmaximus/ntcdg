@@ -3,21 +3,21 @@
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Any
 
 from .config import Config, logger, pd
 from .models import Card
 
 
 # ==================== DECK INDEX ====================
-def load_decks_index() -> Dict[str, Any]:
+def load_decks_index() -> dict[str, Any]:
     if os.path.exists(Config.DECKS_INDEX_FILE):
-        with open(Config.DECKS_INDEX_FILE, "r") as f:
+        with open(Config.DECKS_INDEX_FILE) as f:
             return json.load(f)
     return {}
 
 
-def save_decks_index(index: Dict[str, Any]):
+def save_decks_index(index: dict[str, Any]):
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
     with open(Config.DECKS_INDEX_FILE, "w") as f:
         json.dump(index, f, indent=2)
@@ -69,17 +69,17 @@ def get_deck_info(deck_name: str):
 
 
 # ==================== DECK LOADING / SAVING ====================
-def load_deck(deck_name: str) -> List[Card]:
+def load_deck(deck_name: str) -> list[Card]:
     """Load a deck from JSON, returning a list of Card objects."""
     json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
     if os.path.exists(json_path):
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             raw = json.load(f)
         return [Card.from_dict(d) for d in raw]
     return []
 
 
-def save_deck(deck: List[Card], deck_name: str):
+def save_deck(deck: list[Card], deck_name: str):
     """Save a deck to JSON, update spreadsheet and index."""
     json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
@@ -90,14 +90,14 @@ def save_deck(deck: List[Card], deck_name: str):
 
 
 # ==================== HISTORY ====================
-def load_history() -> Dict[str, Any]:
+def load_history() -> dict[str, Any]:
     if os.path.exists(Config.HISTORY_FILE):
-        with open(Config.HISTORY_FILE, "r") as f:
+        with open(Config.HISTORY_FILE) as f:
             return json.load(f)
     return {"cards": [], "decks": []}
 
 
-def is_novel(card: Card, history: Dict[str, Any]) -> bool:
+def is_novel(card: Card, history: dict[str, Any]) -> bool:
     """Check if a card's symbols are sufficiently different from history."""
     new_symbols = set(card.symbols)
     for past in history.get("cards", []):
@@ -108,7 +108,7 @@ def is_novel(card: Card, history: Dict[str, Any]) -> bool:
 
 
 # ==================== SPREADSHEET ====================
-def export_spreadsheet(deck: List[Card], deck_name: str) -> str:
+def export_spreadsheet(deck: list[Card], deck_name: str) -> str:
     if pd is None:
         logger.warning("pandas not installed — skipping spreadsheet")
         return ""
