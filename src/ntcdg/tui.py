@@ -36,7 +36,7 @@ from textual.widgets import (
 )
 from textual.worker import work
 
-from .config import setup_logging
+from .config import Config, setup_logging
 from .models import Card
 from .overlay import get_card_number_text, overlay_card_text
 from .storage import (
@@ -57,11 +57,13 @@ def load_settings():
             return json.load(f)
     return {
         "venice_api_key": "",
-        "text_model": "llama-3.1-405b",
-        "image_model": "venice-sd3",
+        "text_model": Config.DEFAULT_TEXT_MODEL,
+        "image_model": Config.DEFAULT_IMAGE_MODEL,
+        "edit_model": Config.DEFAULT_EDIT_MODEL,
         "image_size": "1024x1536",
         "symbol_mode": "generate",
         "symbols_file": "",
+        "font_path": "",
     }
 
 

@@ -56,12 +56,19 @@ class Config:
     LOGS_DIR = os.path.join(OUTPUT_DIR, "logs")
     DECKS_INDEX_FILE = os.path.join(OUTPUT_DIR, "decks_index.json")
 
-    DEFAULT_TEXT_MODEL = "llama-3.1-405b"
-    DEFAULT_IMAGE_MODEL = "venice-sd3"
+    # --- Model defaults (best-fit per task as of 2026) ---
+    # Text: deepseek-v3.2 — strong structured JSON output + reasoning
+    DEFAULT_TEXT_MODEL = "deepseek-v3.2"
+    # Image gen: flux-2-pro — best prompt adherence + detail for card art
+    DEFAULT_IMAGE_MODEL = "flux-2-pro"
+    # Image edit: flux-2-max-edit — high-quality inpainting/style transfer
+    DEFAULT_EDIT_MODEL = "flux-2-max-edit"
 
-    VENICE_TEXT_URL = "https://api.venice.ai/api/v1/chat/completions"
-    VENICE_IMAGE_URL = "https://api.venice.ai/api/v1/image/generations"
-    VENICE_EDIT_URL = "https://api.venice.ai/api/v1/image/edit"
+    VENICE_BASE_URL = "https://api.venice.ai/api/v1"
+    VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"
+    VENICE_IMAGE_URL = f"{VENICE_BASE_URL}/image/generations"
+    VENICE_EDIT_URL = f"{VENICE_BASE_URL}/image/edit"
+    VENICE_MODELS_URL = f"{VENICE_BASE_URL}/models"
 
     NOVELTY_THRESHOLD = 0.55
     SYMBOLS_DIR = "symbols"

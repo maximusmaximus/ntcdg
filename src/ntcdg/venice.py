@@ -19,10 +19,11 @@ def analyze_with_venice(card: Card, api_key: str, model: str) -> dict[str, Any]:
         return {"venice_error": "Missing API key or requests library"}
 
     system = (
-        "You are an expert tarot symbologist. Focus on how visual elements "
-        "combine and interact. Return only valid JSON."
+        "You are an expert tarot symbologist and card designer. "
+        "Analyze how visual elements combine and interact to create meaning. "
+        "You always respond with valid JSON."
     )
-    user = f"""Analyze this tarot card:
+    user = f"""Analyze this tarot card and provide enriched creative content:
 
 Title: {card.title}
 Type: {card.card_type}
@@ -30,32 +31,34 @@ Symbols: {', '.join(card.symbols)}
 Layout: {card.layout}
 Deck Theme: {card.deck_prompt or 'None'}
 
-Return ONLY this JSON:
-{{
-  "new_title": "evocative title",
-  "description": "rich description of imagery and element interactions",
-  "serial": "unique serial like VNX-042-007",
-  "upright_interpretation": "positive/upright meaning",
-  "reversed_interpretation": "reversed meaning"
-}}"""
+Return a JSON object with these fields:
+- "new_title": an evocative, thematic title that captures the card's essence
+- "description": rich visual description of imagery and how elements interact
+- "serial": unique serial number like VNX-042-007
+- "upright_interpretation": the card's positive/upright meaning (2-3 sentences)
+- "reversed_interpretation": the card's reversed/shadow meaning (2-3 sentences)"""
 
     try:
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 850,
+            "response_format": {"type": "json_object"},
+        }
         resp = requests.post(
             Config.VENICE_TEXT_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 850,
-            },
+            json=payload,
             timeout=90,
         )
+        resp.raise_for_status()
         raw = resp.json()["choices"][0]["message"]["content"].strip()
-        # Strip markdown code fences (handles ```json ... ``` and ``` ... ```)
+
+        # response_format should give clean JSON, but strip fences as fallback
         match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
         content = match.group(1).strip() if match else raw
         import json
@@ -166,7 +169,7 @@ def generate_image_with_venice(
                 edit_prompt = " ".join(edit_prompt_parts)
                 edit_result = edit_image_with_venice(
                     temp_path, edit_prompt, api_key,
-                    model="firered-image-edit", image_size=image_size,
+                    model=Config.DEFAULT_EDIT_MODEL, image_size=image_size,
                 )
                 if edit_result.get("image_path"):
                     with contextlib.suppress(OSError):
@@ -202,7 +205,7 @@ def edit_image_with_venice(
     base_image_path: str,
     edit_prompt: str,
     api_key: str,
-    model: str = "firered-image-edit",
+    model: str = None,
     image_size: str = "1024x1536",
     rate_limit_delay: float = 2.0,
 ) -> dict[str, Any]:
@@ -212,6 +215,8 @@ def edit_image_with_venice(
     """
     if not api_key or not requests:
         return {"image_error": "Missing API key or requests"}
+
+    model = model or Config.DEFAULT_EDIT_MODEL
 
     time.sleep(rate_limit_delay)
 
