@@ -7,6 +7,7 @@ from typing import Any
 
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
+from .overlay import get_card_number_text, overlay_card_text
 from .storage import load_deck, save_deck
 from .symbols import generate_symbol_images, load_symbols_config
 from .venice import analyze_with_venice, generate_image_with_venice
@@ -131,9 +132,9 @@ def generate_card(
 def build_card_prompt(card: Card) -> str:
     """Build the image generation prompt for a card."""
     base = (
-        f"Highly detailed symbolic tarot card in portrait orientation. "
-        f"Title at bottom: '{card.title}'. "
-        f"Scene: {card.card_type} featuring {', '.join(card.symbols)}. "
+        f"Highly detailed symbolic tarot card artwork in portrait orientation. "
+        f"Scene: {card.card_type} — '{card.title}'. "
+        f"Visual elements: {', '.join(card.symbols)}. "
         f"Composition and layout: {card.layout}. "
     )
 
@@ -146,8 +147,11 @@ def build_card_prompt(card: Card) -> str:
         base += f"Overall deck theme: {card.deck_prompt}. "
 
     base += (
-        "Psychedelic neon glitch vortex meme aesthetics fused with intricate Rider-Waite symbolic linework. "
-        "High symbolic density, electric colors, dramatic cinematic lighting, glowing energy flows."
+        "Psychedelic neon glitch vortex meme aesthetics fused with intricate "
+        "Rider-Waite symbolic linework. High symbolic density, electric colors, "
+        "dramatic cinematic lighting, glowing energy flows. "
+        "Do NOT render any text, letters, numbers, titles, or words on the card. "
+        "Leave the top and bottom edges slightly darker for a clean gradient border."
     )
     return base
 
@@ -258,6 +262,7 @@ def interactive_review(
     image_size: str,
     negative_prompt: str,
     rate_limit: float,
+    font_path: str = None,
 ):
     pdf_path = create_proof_sheet_pdf(deck, deck_name)
     if pdf_path:
@@ -311,7 +316,11 @@ def interactive_review(
             )
             card.update(result)
             if card.image_path:
-                print("  → New image generated")
+                overlay_card_text(
+                    card.image_path, card.display_title(),
+                    get_card_number_text(card), font_path=font_path,
+                )
+                print("  → New image generated + text overlay applied")
 
         updated = True
 
@@ -331,6 +340,7 @@ def review_existing_deck(
     image_size: str,
     negative_prompt: str,
     rate_limit: float,
+    font_path: str = None,
 ):
     deck = load_deck(deck_name)
     if not deck:
@@ -340,7 +350,7 @@ def review_existing_deck(
     print(f"\nLoaded existing deck: {deck_name} ({len(deck)} cards)")
     interactive_review(
         deck, deck_name, venice_key, text_model, image_model,
-        image_size, negative_prompt, rate_limit,
+        image_size, negative_prompt, rate_limit, font_path=font_path,
     )
 
 
@@ -361,6 +371,7 @@ def generate_deck(
     interactive: bool = True,
     symbol_mode: str = "generate",
     symbols_file: str = None,
+    font_path: str = None,
 ):
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
@@ -438,6 +449,10 @@ def generate_deck(
             )
             card.update(result)
             if card.image_path:
+                overlay_card_text(
+                    card.image_path, card.display_title(),
+                    get_card_number_text(card), font_path=font_path,
+                )
                 stats["image_success"] += 1
             else:
                 stats["image_fail"] += 1
@@ -449,7 +464,7 @@ def generate_deck(
     if interactive:
         deck = interactive_review(
             deck, name, venice_key, text_model, image_model,
-            image_size, negative_prompt, rate_limit,
+            image_size, negative_prompt, rate_limit, font_path=font_path,
         )
 
     print("\n" + "=" * 65)

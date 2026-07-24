@@ -38,6 +38,7 @@ from textual.worker import work
 
 from .config import setup_logging
 from .models import Card
+from .overlay import get_card_number_text, overlay_card_text
 from .storage import (
     load_deck,
     load_decks_index,
@@ -308,6 +309,11 @@ class RegenerateDialog(ModalScreen):
                         )
                         if img_result.get("image_path"):
                             card.update(img_result)
+                            overlay_card_text(
+                                card.image_path, card.display_title(),
+                                get_card_number_text(card),
+                                font_path=settings.get("font_path"),
+                            )
                             success_count += 1
                 except Exception as e:
                     self.app.notify(f"Error on card {pos}: {str(e)[:80]}")

@@ -45,6 +45,10 @@ def main():
 
     parser.add_argument("--venice-key", type=str, default=None)
     parser.add_argument("--no-interactive", action="store_true")
+    parser.add_argument(
+        "--font", type=str, default=None,
+        help="Path to a .ttf/.otf font file for card title and number overlay",
+    )
 
     args = parser.parse_args()
 
@@ -61,6 +65,8 @@ def main():
             logger.warning(f"Non-standard image size '{args.image_size}' — Venice may reject it")
         if args.symbols_file and not os.path.exists(args.symbols_file):
             parser.error(f"Symbols file not found: {args.symbols_file}")
+        if args.font and not os.path.exists(args.font):
+            parser.error(f"Font file not found: {args.font}")
 
     venice_key = args.venice_key or os.getenv("VENICE_API_KEY")
 
@@ -77,6 +83,7 @@ def main():
             image_size=args.image_size,
             negative_prompt=args.negative_prompt,
             rate_limit=args.rate_limit,
+            font_path=args.font,
         )
     elif args.deck:
         generate_deck(
@@ -95,6 +102,7 @@ def main():
             interactive=not args.no_interactive,
             symbol_mode=args.symbol_mode,
             symbols_file=args.symbols_file,
+            font_path=args.font,
         )
     else:
         parser.print_help()
