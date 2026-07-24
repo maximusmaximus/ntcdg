@@ -142,3 +142,43 @@ class TestPrintPdf:
         cards = [Card(position=1, title="No Image")]
         result = create_print_pdf(cards, "EmptyDeck")
         assert result == ""
+
+
+class TestBookletPdf:
+    """Test companion booklet PDF generation."""
+
+    def test_booklet_with_card_data(self, tmp_path, monkeypatch):
+        """Booklet should generate with card descriptions."""
+        from ntcdg.finalize import create_booklet_pdf
+
+        monkeypatch.setattr("ntcdg.finalize.Config.OUTPUT_DIR", str(tmp_path))
+
+        cards = [
+            Card(
+                position=1, title="The Fool", card_type="Major Arcana",
+                arcana_number=0, description="A young traveler steps forward.",
+                upright_interpretation="New beginnings and adventure.",
+                reversed_interpretation="Recklessness and poor judgment.",
+            ),
+            Card(
+                position=23, title="Ace of Wands", card_type="Minor Arcana",
+                suit="Wands", rank="Ace",
+                description="A hand holds a sprouting wand.",
+                upright_interpretation="Inspiration and new opportunities.",
+                reversed_interpretation="Delays and lack of direction.",
+            ),
+        ]
+
+        pdf_path = create_booklet_pdf(cards, "TestBooklet")
+        assert pdf_path
+        assert os.path.exists(pdf_path)
+        assert "BOOKLET" in pdf_path
+
+    def test_booklet_empty_deck(self, tmp_path, monkeypatch):
+        """Booklet should handle an empty deck gracefully."""
+        from ntcdg.finalize import create_booklet_pdf
+
+        monkeypatch.setattr("ntcdg.finalize.Config.OUTPUT_DIR", str(tmp_path))
+        pdf_path = create_booklet_pdf([], "EmptyBooklet")
+        assert pdf_path  # Still generates (cover + credits pages)
+        assert os.path.exists(pdf_path)

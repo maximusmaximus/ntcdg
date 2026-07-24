@@ -23,6 +23,7 @@ except ImportError:
     HAS_PILLOW = False
 
 if HAS_REPORTLAB:
+    from reportlab.lib.colors import CMYKColor
     from reportlab.lib.units import inch
     from reportlab.pdfgen import canvas as pdf_canvas
 
@@ -307,6 +308,303 @@ def create_print_pdf(
     return pdf_path
 
 
+# ==================== BOOKLET HELPERS ====================
+# Booklet page is the same size as a tarot card
+_BK_W = CARD_TRIM_W * 72  # page width in points (2.75")
+_BK_H = CARD_TRIM_H * 72  # page height in points (4.75")
+_BK_MARGIN = 0.25 * 72    # margin in points
+_BK_USABLE_W = _BK_W - 2 * _BK_MARGIN
+
+GITHUB_URL = "github.com/maximusmaximus/ntcdg"
+
+# Color palette (CMYK)
+_INK = CMYKColor(0, 0, 0, 1) if HAS_REPORTLAB else None        # black
+_GRAY = CMYKColor(0, 0, 0, 0.45) if HAS_REPORTLAB else None    # mid gray
+_LGRAY = CMYKColor(0, 0, 0, 0.25) if HAS_REPORTLAB else None   # light gray
+_GOLD = CMYKColor(0, 0.08, 0.35, 0.09) if HAS_REPORTLAB else None  # warm gold
+_WHITE = CMYKColor(0, 0, 0, 0) if HAS_REPORTLAB else None
+
+
+def _bk_wrap(c, text: str, font: str, size: float) -> list[str]:
+    """Word-wrap text to fit the booklet's usable width."""
+    words = (text or "").split()
+    if not words:
+        return [""]
+    lines = []
+    current = ""
+    for word in words:
+        test = f"{current} {word}".strip()
+        if c.stringWidth(test, font, size) <= _BK_USABLE_W:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _bk_draw_rule(c, y: float) -> float:
+    """Draw a thin decorative rule across the page. Returns new y."""
+    c.setStrokeColor(_LGRAY)
+    c.setLineWidth(0.4)
+    c.line(_BK_MARGIN, y, _BK_W - _BK_MARGIN, y)
+    return y - 6
+
+
+def _bk_write_text(c, y: float, text: str, font: str = "Helvetica",
+                   size: float = 6.5, color=None, align: str = "left") -> float:
+    """Write a single line. Returns new y position."""
+    c.setFont(font, size)
+    c.setFillColor(color or _INK)
+    if align == "center":
+        c.drawCentredString(_BK_W / 2, y, text)
+    elif align == "right":
+        c.drawRightString(_BK_W - _BK_MARGIN, y, text)
+    else:
+        c.drawString(_BK_MARGIN, y, text)
+    return y - size * 1.35
+
+
+def _bk_write_wrapped(c, y: float, text: str, font: str = "Helvetica",
+                      size: float = 6.5, color=None) -> float:
+    """Write word-wrapped text. Auto page-breaks. Returns new y."""
+    lines = _bk_wrap(c, text, font, size)
+    line_h = size * 1.35
+    for line in lines:
+        if y - line_h < _BK_MARGIN:
+            c.showPage()
+            y = _BK_H - _BK_MARGIN
+        y = _bk_write_text(c, y, line, font, size, color)
+    return y
+
+
+def _bk_draw_cover(c, deck_name: str, deck, num_cards: int):
+    """Draw the booklet front cover with artwork and title."""
+    # Dark background
+    c.setFillColorCMYK(0.15, 0.12, 0, 0.85)
+    c.rect(0, 0, _BK_W, _BK_H, stroke=0, fill=1)
+
+    # If first card has an image, draw it faded as cover art
+    cover_card = next(
+        (card for card in deck
+         if card.image_path and os.path.exists(str(card.image_path))),
+        None,
+    )
+    if cover_card and HAS_PILLOW:
+        try:
+            from PIL import ImageEnhance
+            img = Image.open(cover_card.image_path)
+            img = ImageEnhance.Brightness(img).enhance(0.3)
+            tmp = os.path.join(tempfile.gettempdir(), "ntcdg_cover_tmp.jpg")
+            img.convert("RGB").save(tmp, "JPEG", quality=80)
+            c.drawImage(tmp, 0, 0, width=_BK_W, height=_BK_H,
+                        preserveAspectRatio=True, anchor="c")
+            os.remove(tmp)
+        except Exception:
+            pass  # Fall back to solid background
+
+    # Decorative top rule
+    y = _BK_H - _BK_MARGIN * 1.5
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(1.5)
+    c.line(_BK_MARGIN, y, _BK_W - _BK_MARGIN, y)
+
+    # Deck name
+    y -= 28
+    c.setFont("Helvetica-Bold", 14)
+    c.setFillColor(_GOLD)
+    name_display = deck_name.replace("_", " ").replace("-", " ")
+    for line in _bk_wrap(c, name_display, "Helvetica-Bold", 14):
+        c.drawCentredString(_BK_W / 2, y, line)
+        y -= 18
+
+    # Subtitle
+    y -= 8
+    c.setFont("Helvetica", 8)
+    c.setFillColor(_WHITE)
+    c.drawCentredString(_BK_W / 2, y, "A Novel Tarot Deck")
+    y -= 14
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(_BK_W / 2, y, f"{num_cards} Cards")
+
+    # Bottom rule + label
+    y_bottom = _BK_MARGIN * 1.5
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(1.5)
+    c.line(_BK_MARGIN, y_bottom, _BK_W - _BK_MARGIN, y_bottom)
+    c.setFont("Helvetica-Oblique", 6.5)
+    c.setFillColor(_WHITE)
+    c.drawCentredString(_BK_W / 2, y_bottom + 8, "Companion Guide")
+
+
+def _bk_draw_credits(c):
+    """Draw the inside front page: 'Made with <3' and repo link."""
+    y = _BK_H / 2 + 30
+
+    c.setFont("Helvetica", 10)
+    c.setFillColor(_INK)
+    c.drawCentredString(_BK_W / 2, y, "Made with <3")
+
+    y -= 24
+    c.setFont("Helvetica", 7)
+    c.setFillColor(_GRAY)
+    c.drawCentredString(_BK_W / 2, y, "Generated by NTCDG")
+    y -= 11
+    c.drawCentredString(_BK_W / 2, y, "Novel Tarot Card Deck Generator")
+
+    y -= 22
+    _bk_draw_rule(c, y)
+    y -= 14
+
+    c.setFont("Helvetica", 7)
+    c.setFillColor(_INK)
+    c.drawCentredString(_BK_W / 2, y, GITHUB_URL)
+
+    y -= 20
+    _bk_draw_rule(c, y)
+    y -= 14
+
+    c.setFont("Helvetica-Oblique", 6)
+    c.setFillColor(_LGRAY)
+    c.drawCentredString(_BK_W / 2, y, "This deck and its companion guide were")
+    y -= 9
+    c.drawCentredString(_BK_W / 2, y, "created with AI-assisted generation.")
+
+
+def _bk_draw_section_divider(c, title: str, subtitle: str = ""):
+    """Draw a full-page section divider with centered title."""
+    # Light background tint
+    c.setFillColorCMYK(0.03, 0.02, 0, 0.06)
+    c.rect(0, 0, _BK_W, _BK_H, stroke=0, fill=1)
+
+    y_center = _BK_H / 2
+
+    # Decorative rules
+    c.setStrokeColor(_LGRAY)
+    c.setLineWidth(0.6)
+    c.line(_BK_MARGIN, y_center + 20, _BK_W - _BK_MARGIN, y_center + 20)
+    c.line(_BK_MARGIN, y_center - 18, _BK_W - _BK_MARGIN, y_center - 18)
+
+    # Section title
+    c.setFont("Helvetica-Bold", 11)
+    c.setFillColor(_INK)
+    c.drawCentredString(_BK_W / 2, y_center, title)
+
+    if subtitle:
+        c.setFont("Helvetica-Oblique", 7)
+        c.setFillColor(_GRAY)
+        c.drawCentredString(_BK_W / 2, y_center - 30, subtitle)
+
+
+def _bk_write_card_entry(c, y: float, card) -> float:
+    """Write a single card's description entry. Returns new y position."""
+    from .overlay import get_card_number_text
+
+    # Estimate space needed -- if too little room, start new page
+    if y - 65 < _BK_MARGIN:
+        c.showPage()
+        y = _BK_H - _BK_MARGIN
+
+    # Number + title header
+    number = get_card_number_text(card)
+    display_title = card.display_title()
+    header = f"{number}  -  {display_title}"
+
+    y = _bk_draw_rule(c, y)
+    y -= 2
+    y = _bk_write_text(c, y, header, "Helvetica-Bold", 7.5, _INK)
+    y -= 2
+
+    # Description (italic, gray)
+    if card.description:
+        y = _bk_write_wrapped(c, y, card.description, "Helvetica-Oblique", 6, _GRAY)
+        y -= 3
+
+    # Upright interpretation
+    if card.upright_interpretation:
+        y = _bk_write_text(c, y, "Upright", "Helvetica-Bold", 6, _INK)
+        y = _bk_write_wrapped(c, y, card.upright_interpretation, "Helvetica", 6, _INK)
+        y -= 2
+
+    # Reversed interpretation
+    if card.reversed_interpretation:
+        y = _bk_write_text(c, y, "Reversed", "Helvetica-Bold", 6, _INK)
+        y = _bk_write_wrapped(c, y, card.reversed_interpretation, "Helvetica", 6, _INK)
+
+    y -= 4
+    return y
+
+
+# ==================== BOOKLET PDF ====================
+def create_booklet_pdf(deck: list["Card"], deck_name: str) -> str:
+    """
+    Create a pocket-sized companion booklet (same size as a tarot card).
+
+    Structure:
+    1. Cover -- deck name with artwork from first card
+    2. Credits -- "Made with <3", GitHub link
+    3. Major Arcana -- section divider + card entries
+    4. Minor Arcana -- divider per suit + card entries
+       (Wands, Cups, Swords, Pentacles)
+
+    Each card entry: number, title, description,
+    upright interpretation, reversed interpretation.
+    """
+    if not HAS_REPORTLAB:
+        logger.error("reportlab is required for booklet PDF")
+        return ""
+
+    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+    pdf_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}_BOOKLET.pdf")
+
+    c = pdf_canvas.Canvas(pdf_path, pagesize=(_BK_W, _BK_H))
+    c.setTitle(f"{deck_name} - Companion Guide")
+    c.setAuthor("NTCDG")
+
+    sorted_deck = sorted(deck, key=lambda card: card.position or 0)
+
+    # --- Page 1: Cover ---
+    _bk_draw_cover(c, deck_name, sorted_deck, len(deck))
+    c.showPage()
+
+    # --- Page 2: Credits ---
+    _bk_draw_credits(c)
+    c.showPage()
+
+    # --- Group cards by type ---
+    major = [card for card in sorted_deck if card.card_type == "Major Arcana"]
+    suits = {"Wands": [], "Cups": [], "Swords": [], "Pentacles": []}
+    for card in sorted_deck:
+        if card.card_type == "Minor Arcana" and card.suit in suits:
+            suits[card.suit].append(card)
+
+    # --- Major Arcana section ---
+    if major:
+        _bk_draw_section_divider(c, "MAJOR ARCANA", f"{len(major)} Cards")
+        c.showPage()
+        y = _BK_H - _BK_MARGIN
+        for card in major:
+            y = _bk_write_card_entry(c, y, card)
+        c.showPage()
+
+    # --- Minor Arcana sections (by suit) ---
+    for suit_name, cards in suits.items():
+        if not cards:
+            continue
+        _bk_draw_section_divider(c, f"SUIT OF {suit_name.upper()}", f"{len(cards)} Cards")
+        c.showPage()
+        y = _BK_H - _BK_MARGIN
+        for card in cards:
+            y = _bk_write_card_entry(c, y, card)
+        c.showPage()
+
+    c.save()
+    logger.info(f"Booklet PDF saved: {pdf_path}")
+    return pdf_path
+
+
 # ==================== FINALIZATION WORKFLOW ====================
 def finalize_deck(
     deck_name: str,
@@ -314,19 +612,20 @@ def finalize_deck(
     color_mode: str = "color",
 ) -> str:
     """
-    Finalize a deck: validate completeness and generate print-ready PDF.
+    Finalize a deck: validate, generate print PDF and companion booklet.
 
     Steps:
     1. Load deck and validate completeness
     2. Report errors (block) and warnings (inform)
     3. Generate CMYK print PDF with crop marks
-    4. Print summary
+    4. Generate companion booklet PDF (card-sized)
+    5. Print summary
 
     Returns path to the print PDF, or "" on failure.
     """
     deck = load_deck(deck_name)
     if not deck:
-        print(f"❌ Deck '{deck_name}' not found.")
+        print(f"Deck '{deck_name}' not found.")
         return ""
 
     sheet_w, sheet_h = SHEET_SIZES[sheet_size]
@@ -343,34 +642,40 @@ def finalize_deck(
     report = validate_deck(deck)
 
     if report["warnings"]:
-        print(f"\n⚠  {len(report['warnings'])} warning(s):")
+        print(f"\n  {len(report['warnings'])} warning(s):")
         shown = report["warnings"][:10]
         for w in shown:
-            print(f"   ◦ {w}")
+            print(f"   o {w}")
         if len(report["warnings"]) > 10:
             print(f"   ... and {len(report['warnings']) - 10} more")
 
     if report["errors"]:
-        print(f"\n✗  {len(report['errors'])} error(s) — these must be fixed:")
+        print(f"\n  {len(report['errors'])} error(s) -- these must be fixed:")
         for e in report["errors"]:
-            print(f"   ✗ {e}")
-        print("\n❌ Cannot finalize. Fix errors above first.")
+            print(f"   * {e}")
+        print("\nCannot finalize. Fix errors above first.")
         return ""
 
     if not report["warnings"]:
-        print("\n✅ Deck passes all completeness checks.")
+        print("\nDeck passes all completeness checks.")
 
     # --- Generate print PDF ---
     printable = [c for c in deck if c.image_path and os.path.exists(str(c.image_path))]
     total_pages = math.ceil(len(printable) / layout["cards_per_page"])
 
-    print(f"\n📄 Generating print PDF ({len(printable)} cards → {total_pages} pages)...")
+    print(f"\nGenerating print PDF ({len(printable)} cards -> {total_pages} pages)...")
     pdf_path = create_print_pdf(deck, deck_name, sheet_size, color_mode)
+
+    # --- Generate companion booklet ---
+    print("Generating companion booklet...")
+    booklet_path = create_booklet_pdf(deck, deck_name)
 
     if pdf_path:
         print(f"\n{'=' * 60}")
-        print(f"✅ FINALIZED: {deck_name}")
-        print(f"   Print PDF: {pdf_path}")
+        print(f"FINALIZED: {deck_name}")
+        print(f"   Print PDF:  {pdf_path}")
+        if booklet_path:
+            print(f"   Booklet:    {booklet_path}")
         print(f"   Pages: {total_pages}")
         print(f"   Card trim: {CARD_TRIM_W}\" x {CARD_TRIM_H}\"")
         print(f"   Bleed: {BLEED}\" per side")
