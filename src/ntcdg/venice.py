@@ -62,6 +62,24 @@ def _extract_image_b64(data: dict) -> str | None:
     return None
 
 
+def _extract_text_content(resp_json: dict) -> str:
+    """Extract text content from Venice chat completion response.
+
+    DeepSeek v3.2+ models put reasoning in 'reasoning_content' and may
+    leave 'content' empty if max_tokens is too low. This handles both cases.
+    """
+    msg = resp_json["choices"][0]["message"]
+    raw = (msg.get("content") or "").strip()
+    if raw:
+        return raw
+    # Fallback: try reasoning_content
+    reasoning = (msg.get("reasoning_content") or "").strip()
+    if reasoning:
+        logger.warning("Content empty, checking reasoning_content for output")
+        return reasoning
+    return ""
+
+
 # ==================== TEXT ANALYSIS ====================
 @retry_on_failure(max_retries=2, delay=1.5)
 def analyze_with_venice(
@@ -101,7 +119,7 @@ Return a JSON object with these fields:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.7,
-            "max_tokens": 850,
+            "max_tokens": 4000,
         }
         resp = requests.post(
             Config.VENICE_TEXT_URL,
@@ -111,7 +129,10 @@ Return a JSON object with these fields:
         )
         resp.raise_for_status()
         resp_json = resp.json()
-        raw = resp_json["choices"][0]["message"]["content"].strip()
+        raw = _extract_text_content(resp_json)
+
+        if not raw:
+            return {"venice_error": "Empty response from Venice text model"}
 
         # Track usage
         if tracker:
@@ -124,7 +145,7 @@ Return a JSON object with these fields:
                 purpose="analysis",
             )
 
-        # response_format should give clean JSON, but strip fences as fallback
+        # Strip code fences if present
         match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
         content = match.group(1).strip() if match else raw
         import json

@@ -14,6 +14,7 @@ from typing import Any
 
 from .config import Config, logger, requests
 from .models import Card
+from .venice import _extract_text_content
 
 
 # ==================== STYLE EXTRACTION ====================
@@ -84,14 +85,14 @@ def extract_style_from_images(
             json={
                 "model": vision_model,
                 "messages": [{"role": "user", "content": content}],
-                "max_tokens": 500,
+                "max_tokens": 4000,
                 "temperature": 0.3,
             },
             timeout=90,
         )
         resp.raise_for_status()
         data = resp.json()
-        style = data["choices"][0]["message"]["content"].strip()
+        style = _extract_text_content(data)
         logger.info(f"Extracted visual style from {len(content) - 1} images")
         return style
     except Exception as e:
@@ -151,13 +152,13 @@ def generate_style_from_text(
                         ),
                     },
                 ],
-                "max_tokens": 400,
+                "max_tokens": 4000,
                 "temperature": 0.7,
             },
-            timeout=30,
+            timeout=90,
         )
         resp.raise_for_status()
-        style = resp.json()["choices"][0]["message"]["content"].strip()
+        style = _extract_text_content(resp.json())
         logger.info("Generated deck style from text description")
         return style
     except Exception as e:
@@ -258,13 +259,13 @@ def refine_card_prompt(
                         ),
                     },
                 ],
-                "max_tokens": 300,
+                "max_tokens": 4000,
                 "temperature": 0.6,
             },
-            timeout=30,
+            timeout=90,
         )
         resp.raise_for_status()
-        prompt = resp.json()["choices"][0]["message"]["content"].strip()
+        prompt = _extract_text_content(resp.json())
 
         # Strip any markdown quotes the model might add
         if prompt.startswith('"') and prompt.endswith('"'):
