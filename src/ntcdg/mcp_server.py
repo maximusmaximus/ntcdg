@@ -523,6 +523,471 @@ def get_card_details(deck_name: str, card_num: int) -> dict[str, Any]:
     }
 
 
+# ==================== AGENTIC WORKFLOW TOOLS ====================
+
+@mcp.tool()
+def estimate_cost(
+    cards: int = 78,
+    analyze: bool = True,
+    generate_images: bool = True,
+    previews: int = 3,
+    image_model: str = "",
+    text_model: str = "",
+) -> dict[str, Any]:
+    """Estimate API usage and cost BEFORE starting generation.
+
+    Call this first so you can tell the user: "This will cost ~$2.50
+    and take ~15 minutes. Want to proceed?"
+
+    Args:
+        cards: Number of cards to generate
+        analyze: Whether text analysis will be used
+        generate_images: Whether image generation will be used
+        previews: Number of preview cards (0 to skip)
+        image_model: Image model (default: flux-2-pro)
+        text_model: Text model (default: deepseek-v3.2)
+    """
+    from .usage import PRICING
+
+    img_model = image_model or Config.DEFAULT_IMAGE_MODEL
+    txt_model = text_model or Config.DEFAULT_TEXT_MODEL
+
+    # Count API calls
+    text_calls = 0
+    image_calls = 0
+
+    if analyze:
+        text_calls += cards          # 1 analysis call per card
+    if generate_images:
+        text_calls += cards          # 1 prompt refinement per card
+        text_calls += 1              # 1 style extraction
+        image_calls += cards         # 1 image per card
+        image_calls += previews      # preview images
+
+    # Estimate tokens (based on typical usage)
+    avg_prompt_tokens = 450
+    avg_completion_tokens = 200
+    total_prompt = text_calls * avg_prompt_tokens
+    total_completion = text_calls * avg_completion_tokens
+
+    # Cost calculation
+    txt_pricing = PRICING["text"].get(txt_model, PRICING["text"]["_default"])
+    text_cost = (
+        (total_prompt / 1000) * txt_pricing["input"]
+        + (total_completion / 1000) * txt_pricing["output"]
+    )
+    img_price = PRICING["image"].get(img_model, PRICING["image"]["_default"])
+    image_cost = image_calls * img_price
+    total_cost = text_cost + image_cost
+
+    # Estimate time (rate limit + processing)
+    seconds_per_image = 3.5   # generation + rate limit
+    seconds_per_text = 2.0    # analysis + rate limit
+    est_seconds = (
+        image_calls * seconds_per_image
+        + text_calls * seconds_per_text
+    )
+    est_minutes = round(est_seconds / 60, 1)
+
+    return {
+        "cards": cards,
+        "api_calls": {
+            "text": text_calls,
+            "image": image_calls,
+            "total": text_calls + image_calls,
+        },
+        "estimated_tokens": {
+            "prompt": total_prompt,
+            "completion": total_completion,
+            "total": total_prompt + total_completion,
+        },
+        "estimated_cost_usd": {
+            "text": round(text_cost, 4),
+            "image": round(image_cost, 4),
+            "total": round(total_cost, 4),
+        },
+        "estimated_time_minutes": est_minutes,
+        "models": {
+            "text": txt_model,
+            "image": img_model,
+        },
+    }
+
+
+@mcp.tool()
+def preview_style(
+    name: str,
+    vibe: str = "ethereal dreamscape",
+    deck_prompt: str = "",
+    symbol_mode: str = "generate",
+    symbols_file: str = "",
+) -> dict[str, Any]:
+    """Generate 3 preview cards to test a deck's visual style.
+
+    Call this BEFORE create_deck. Send the preview images to the user
+    in Telegram. If they approve, call create_deck with the same params.
+    If they want changes, adjust vibe/deck_prompt and call again.
+
+    Args:
+        name: Deck name (for file naming)
+        vibe: Artistic style/aesthetic
+        deck_prompt: Additional theme instructions
+        symbol_mode: "generate" or "provide"
+        symbols_file: Path to symbols.json if symbol_mode="provide"
+    """
+    from .generator import (
+        _PREVIEW_CARDS,
+        build_card_prompt,
+        generate_card,
+    )
+    from .overlay import get_card_number_text, overlay_card_text
+    from .style import extract_deck_style, refine_card_prompt
+    from .symbols import load_symbols_config
+    from .venice import generate_image_with_venice
+
+    venice_key = _get_venice_key()
+    symbols_config = load_symbols_config(symbols_file or None)
+
+    # Build symbol images lookup
+    symbol_images = {}
+    for s in symbols_config["symbols"]:
+        if s.get("image") and os.path.exists(str(s["image"])):
+            symbol_images[s["name"]] = s["image"]
+
+    # Extract style
+    symbol_descs = [
+        s.get("description", s.get("name", ""))
+        for s in symbols_config["symbols"]
+    ]
+    deck_style = extract_deck_style(
+        symbol_images=symbol_images,
+        symbol_descriptions=symbol_descs,
+        vibe=vibe,
+        deck_prompt=deck_prompt,
+        api_key=venice_key,
+        text_model=Config.DEFAULT_TEXT_MODEL,
+    )
+
+    if not deck_style:
+        return {"error": "Style extraction failed", "previews": []}
+
+    # Generate 3 preview cards
+    preview_dir = os.path.join(Config.IMAGES_DIR, "previews")
+    os.makedirs(preview_dir, exist_ok=True)
+
+    previews = []
+    for i, card_def in enumerate(_PREVIEW_CARDS):
+        card = generate_card(
+            position=i + 1, total=3, card_def=card_def,
+            deck_vibe=vibe, deck_prompt=deck_prompt,
+            symbols=symbols_config["symbols"],
+        )
+
+        if deck_style:
+            card.prompt = refine_card_prompt(
+                card, deck_style, venice_key, Config.DEFAULT_TEXT_MODEL,
+            )
+        else:
+            card.prompt = build_card_prompt(card, deck_style)
+
+        result = generate_image_with_venice(
+            card, venice_key, Config.DEFAULT_IMAGE_MODEL,
+            image_size=Config.DEFAULT_IMAGE_SIZE,
+            rate_limit_delay=1.5,
+            symbol_mode=symbol_mode,
+            symbol_images=symbol_images,
+        )
+        card.update(result)
+
+        if card.image_path:
+            import shutil
+            preview_name = (
+                f"{name}_preview_{i + 1}_"
+                f"{card_def['title'].replace(' ', '_')}.png"
+            )
+            preview_path = os.path.join(preview_dir, preview_name)
+            shutil.copy2(card.image_path, preview_path)
+            overlay_card_text(
+                preview_path, card.display_title(),
+                get_card_number_text(card),
+            )
+            previews.append({
+                "card": card_def["title"],
+                "image_path": os.path.abspath(preview_path),
+            })
+        else:
+            previews.append({
+                "card": card_def["title"],
+                "error": result.get("image_error", "generation failed"),
+            })
+
+    return {
+        "deck_name": name,
+        "vibe": vibe,
+        "style_prompt": deck_style[:300],
+        "previews": previews,
+        "success_count": sum(1 for p in previews if "image_path" in p),
+    }
+
+
+@mcp.tool()
+def generate_single_card(
+    deck_name: str,
+    card_num: int,
+) -> dict[str, Any]:
+    """Generate or regenerate a single card in an existing deck.
+
+    Use this for incremental generation — generate one card at a time
+    and send each to the user in Telegram as it completes.
+
+    Args:
+        deck_name: Name of the deck
+        card_num: Card position number (1-based)
+    """
+    from .generator import build_card_prompt
+    from .overlay import get_card_number_text, overlay_card_text
+    from .storage import load_deck, load_decks_index, save_deck
+    from .style import refine_card_prompt
+    from .symbols import load_symbols_config
+    from .venice import analyze_with_venice, generate_image_with_venice
+
+    venice_key = _get_venice_key()
+
+    deck = load_deck(deck_name)
+    if not deck:
+        return {"error": f"Deck '{deck_name}' not found"}
+
+    card = next((c for c in deck if c.position == card_num), None)
+    if not card:
+        return {"error": f"Card {card_num} not found in deck"}
+
+    # Get deck metadata for style
+    index = load_decks_index()
+    meta = index.get(deck_name, {})
+    usage = meta.get("usage", {})
+    deck_style = usage.get("style_prompt", "")
+
+    # Refine prompt
+    if deck_style:
+        card.prompt = refine_card_prompt(
+            card, deck_style, venice_key, Config.DEFAULT_TEXT_MODEL,
+        )
+    elif card.prompt:
+        pass  # keep existing prompt
+    else:
+        card.prompt = build_card_prompt(card, "")
+
+    # Analyze
+    result = analyze_with_venice(card, venice_key, Config.DEFAULT_TEXT_MODEL)
+    card.update(result)
+
+    # Generate image
+    symbols_config = load_symbols_config(None)
+    symbol_images = {}
+    for s in symbols_config["symbols"]:
+        if s.get("image") and os.path.exists(str(s["image"])):
+            symbol_images[s["name"]] = s["image"]
+
+    img_result = generate_image_with_venice(
+        card, venice_key, Config.DEFAULT_IMAGE_MODEL,
+        image_size=Config.DEFAULT_IMAGE_SIZE,
+        rate_limit_delay=1.5,
+        symbol_images=symbol_images,
+    )
+    card.update(img_result)
+
+    if card.image_path:
+        overlay_card_text(
+            card.image_path, card.display_title(),
+            get_card_number_text(card),
+        )
+
+    # Save updated deck
+    save_deck(deck, deck_name)
+
+    return {
+        "card_num": card_num,
+        "title": card.display_title(),
+        "has_image": bool(
+            card.image_path and os.path.exists(str(card.image_path))
+        ),
+        "image_path": os.path.abspath(card.image_path) if card.image_path else None,
+        "has_analysis": bool(card.description and not card.venice_error),
+        "description": (card.description or "")[:200],
+        "error": card.venice_error or card.image_error or None,
+    }
+
+
+@mcp.tool()
+def get_all_images(deck_name: str) -> dict[str, Any]:
+    """Get all card image paths for a deck in one call.
+
+    Returns paths sorted by card position. Use this to batch-send
+    all card images to the user in Telegram.
+    """
+    from .storage import load_deck, load_decks_index
+
+    deck = load_deck(deck_name)
+    if not deck:
+        return {"error": f"Deck '{deck_name}' not found"}
+
+    sorted_deck = sorted(deck, key=lambda c: c.position or 0)
+
+    images = []
+    missing = []
+    for card in sorted_deck:
+        if card.image_path and os.path.exists(str(card.image_path)):
+            images.append({
+                "position": card.position,
+                "title": card.display_title(),
+                "path": os.path.abspath(card.image_path),
+            })
+        else:
+            missing.append({
+                "position": card.position,
+                "title": card.display_title(),
+            })
+
+    # Include back image
+    index = load_decks_index()
+    meta = index.get(deck_name, {})
+    back_path = meta.get("back_image", "")
+
+    result = {
+        "deck_name": deck_name,
+        "total": len(sorted_deck),
+        "images": images,
+        "images_count": len(images),
+        "missing": missing,
+        "missing_count": len(missing),
+    }
+    if back_path and os.path.exists(back_path):
+        result["back_image"] = os.path.abspath(back_path)
+
+    return result
+
+
+@mcp.tool()
+def suggest_deck(user_description: str) -> dict[str, Any]:
+    """Generate a structured deck configuration from a casual user description.
+
+    Turn natural language like "something dark and gothic with roses"
+    into a proper vibe, deck_prompt, recommended card count, and
+    suggested back prompt.
+
+    Args:
+        user_description: The user's casual description of what they want
+    """
+    import json as json_mod
+
+    venice_key = _get_venice_key()
+
+    try:
+        import requests as req
+    except ImportError:
+        return {"error": "requests library not available"}
+
+    system = (
+        "You are a tarot deck creative director. Given a casual description, "
+        "produce a structured deck configuration. Respond with valid JSON only."
+    )
+    user_prompt = f"""A user wants a custom tarot deck. Their description: "{user_description}"
+
+Return a JSON object with:
+- "name": a short deck name (letters/underscores only, max 20 chars)
+- "cards": recommended card count (22 for focused/major-only, 78 for full)
+- "vibe": a rich artistic vibe string (15-30 words describing the visual aesthetic)
+- "deck_prompt": a detailed theme prompt (2-3 sentences about the deck's narrative)
+- "back_prompt": a prompt for the card back design (15-20 words)
+- "symbol_suggestions": list of 4-6 symbol names that fit the theme
+- "reasoning": 1 sentence explaining your creative choices"""
+
+    try:
+        resp = req.post(
+            Config.VENICE_TEXT_URL,
+            headers={"Authorization": f"Bearer {venice_key}"},
+            json={
+                "model": Config.DEFAULT_TEXT_MODEL,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.8,
+                "max_tokens": 600,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+        import re
+        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
+        content = match.group(1).strip() if match else raw
+        suggestion = json_mod.loads(content)
+
+        # Add cost estimate
+        cards = suggestion.get("cards", 78)
+        cost = estimate_cost(cards=cards)
+        suggestion["estimated_cost"] = cost["estimated_cost_usd"]
+        suggestion["estimated_time_minutes"] = cost["estimated_time_minutes"]
+
+        return suggestion
+
+    except Exception as e:
+        return {"error": f"Suggestion generation failed: {e}"}
+
+
+@mcp.tool()
+def deck_progress(deck_name: str) -> dict[str, Any]:
+    """Lightweight progress check for a deck being generated.
+
+    Returns completion counts without heavy processing. Use this
+    to poll progress and update the user in Telegram.
+
+    Args:
+        deck_name: Name of the deck to check
+    """
+    from .storage import load_deck
+
+    deck = load_deck(deck_name)
+    if not deck:
+        return {"error": f"Deck '{deck_name}' not found", "exists": False}
+
+    sorted_deck = sorted(deck, key=lambda c: c.position or 0)
+    total = len(sorted_deck)
+
+    images_done = 0
+    analysis_done = 0
+    errors = 0
+    latest_title = ""
+
+    for card in sorted_deck:
+        if card.image_path and os.path.exists(str(card.image_path)):
+            images_done += 1
+            latest_title = card.display_title()
+        if card.description and not card.venice_error:
+            analysis_done += 1
+        if card.venice_error or card.image_error:
+            errors += 1
+
+    complete = min(images_done, analysis_done)
+    pct = round((complete / total) * 100) if total else 0
+
+    return {
+        "deck_name": deck_name,
+        "exists": True,
+        "total": total,
+        "images_done": images_done,
+        "analysis_done": analysis_done,
+        "complete": complete,
+        "errors": errors,
+        "percent": pct,
+        "latest_card": latest_title,
+        "ready_to_finalize": complete == total and errors == 0,
+    }
+
+
 # ==================== ENTRY POINT ====================
 
 def main():

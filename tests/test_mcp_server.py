@@ -181,3 +181,105 @@ class TestMCPTools:
 
         result = get_card_image("ImgDeck", 1)
         assert "error" in result
+
+
+class TestAgenticTools:
+    """Test the 6 new agentic workflow tools."""
+
+    def test_estimate_cost_full_deck(self):
+        """Should estimate cost for a 78-card deck."""
+        from ntcdg.mcp_server import estimate_cost
+
+        result = estimate_cost(cards=78, analyze=True, generate_images=True)
+        assert result["cards"] == 78
+        assert result["api_calls"]["text"] > 0
+        assert result["api_calls"]["image"] > 0
+        assert result["estimated_cost_usd"]["total"] > 0
+        assert result["estimated_time_minutes"] > 0
+
+    def test_estimate_cost_major_only(self):
+        """Should estimate less for 22 cards."""
+        from ntcdg.mcp_server import estimate_cost
+
+        full = estimate_cost(cards=78)
+        major = estimate_cost(cards=22)
+        assert major["estimated_cost_usd"]["total"] < full["estimated_cost_usd"]["total"]
+        assert major["estimated_time_minutes"] < full["estimated_time_minutes"]
+
+    def test_estimate_cost_no_images(self):
+        """Should have zero image cost when images disabled."""
+        from ntcdg.mcp_server import estimate_cost
+
+        result = estimate_cost(cards=22, generate_images=False)
+        assert result["api_calls"]["image"] == 0
+        assert result["estimated_cost_usd"]["image"] == 0
+
+    def test_estimate_cost_no_previews(self):
+        """Should subtract preview calls when previews=0."""
+        from ntcdg.mcp_server import estimate_cost
+
+        with_previews = estimate_cost(cards=22, previews=3)
+        without = estimate_cost(cards=22, previews=0)
+        assert without["api_calls"]["image"] < with_previews["api_calls"]["image"]
+
+    def test_get_all_images(self, tmp_path, monkeypatch):
+        """Should return all image paths."""
+        from ntcdg.mcp_server import get_all_images
+        from ntcdg.storage import save_deck
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        # Create a card with an image file
+        img_path = tmp_path / "001_test.png"
+        img_path.write_bytes(b"fake image")
+        deck = [
+            Card(position=1, title="Fool", image_path=str(img_path)),
+            Card(position=2, title="Mage"),  # no image
+        ]
+        save_deck(deck, "ImgDeck")
+
+        result = get_all_images("ImgDeck")
+        assert result["images_count"] == 1
+        assert result["missing_count"] == 1
+        assert result["images"][0]["title"] == "Fool"
+
+    def test_get_all_images_missing_deck(self, tmp_path, monkeypatch):
+        """Should handle missing deck."""
+        from ntcdg.mcp_server import get_all_images
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+        result = get_all_images("NoDeck")
+        assert "error" in result
+
+    def test_deck_progress(self, tmp_path, monkeypatch):
+        """Should return progress counts."""
+        from ntcdg.mcp_server import deck_progress
+        from ntcdg.storage import save_deck
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        img_path = tmp_path / "001_test.png"
+        img_path.write_bytes(b"fake")
+        deck = [
+            Card(position=1, title="Fool", description="done",
+                 image_path=str(img_path)),
+            Card(position=2, title="Mage", venice_error="timeout"),
+            Card(position=3, title="Priestess"),
+        ]
+        save_deck(deck, "ProgDeck")
+
+        result = deck_progress("ProgDeck")
+        assert result["total"] == 3
+        assert result["images_done"] == 1
+        assert result["analysis_done"] == 1
+        assert result["errors"] == 1
+        assert result["percent"] == 33
+        assert result["ready_to_finalize"] is False
+
+    def test_deck_progress_missing(self, tmp_path, monkeypatch):
+        """Should handle missing deck."""
+        from ntcdg.mcp_server import deck_progress
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+        result = deck_progress("NoDeck")
+        assert result["exists"] is False
