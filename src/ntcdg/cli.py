@@ -79,6 +79,10 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
         help="Clone a deck under a new name",
     )
     cmds.add_argument(
+        "--deck-stats", type=str, default=None, metavar="DECK",
+        help="Show API usage, cost estimate, and style prompt for a deck",
+    )
+    cmds.add_argument(
         "--init-config", action="store_true",
         help="Create a sample ~/.ntcdgrc config file",
     )
@@ -246,6 +250,10 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
     elif args.deck_info:
         from .storage import get_deck_info
         get_deck_info(args.deck_info)
+
+    elif args.deck_stats:
+        from .usage import display_deck_stats
+        display_deck_stats(args.deck_stats)
 
     elif args.list_cards:
         from .storage import list_cards

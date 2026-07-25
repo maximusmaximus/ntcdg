@@ -11,6 +11,7 @@ from .overlay import get_card_number_text, overlay_card_text
 from .storage import load_deck, save_deck, update_deck_index
 from .style import extract_deck_style, refine_card_prompt
 from .symbols import generate_symbol_images, load_symbols_config
+from .usage import UsageTracker
 from .venice import analyze_with_venice, generate_image_with_venice
 
 if HAS_TQDM:
@@ -522,6 +523,12 @@ def generate_deck(
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
 
+    # --- Initialize usage tracker ---
+    tracker = UsageTracker()
+    tracker.text_model = text_model
+    tracker.image_model = image_model
+    tracker.image_size = image_size
+
     logger.info(f"Starting deck: {name} ({num_cards} cards)")
 
     # --- Load and prepare symbols ---
@@ -572,6 +579,7 @@ def generate_deck(
         )
         if deck_style:
             logger.info(f"Deck style locked ({len(deck_style)} chars)")
+            tracker.record_style_call(deck_style)
             # Persist style in deck index
             update_deck_index(
                 name, num_cards, vibe=deck_vibe, theme=deck_prompt,
@@ -685,7 +693,9 @@ def generate_deck(
         if analyze and venice_key:
             if HAS_TQDM:
                 iterator.set_description(f"Card {position}/{num_cards} - Venice Text")
-            result = analyze_with_venice(card, venice_key, text_model)
+            result = analyze_with_venice(
+                card, venice_key, text_model, tracker=tracker,
+            )
             card.update(result)
             if "venice_error" not in result:
                 stats["venice_success"] += 1
@@ -702,6 +712,7 @@ def generate_deck(
                 rate_limit_delay=rate_limit,
                 symbol_mode=symbol_mode,
                 symbol_images=symbol_images,
+                tracker=tracker,
             )
             card.update(result)
             if card.image_path:
@@ -717,18 +728,52 @@ def generate_deck(
 
     save_deck(deck, name)
 
+    # --- Finalize and persist usage stats ---
+    tracker.finalize()
+    from .storage import load_decks_index
+    idx = load_decks_index()
+    meta = idx.get(name, {})
+    update_deck_index(
+        name, num_cards, vibe=deck_vibe, theme=deck_prompt,
+        back_image=meta.get("back_image"),
+        back_prompt=meta.get("back_prompt"),
+    )
+    # Write usage into index
+    idx = load_decks_index()
+    if name in idx:
+        idx[name]["usage"] = tracker.to_dict()
+        from .storage import save_decks_index
+        save_decks_index(idx)
+
     if interactive:
         deck = interactive_review(
             deck, name, venice_key, text_model, image_model,
             image_size, negative_prompt, rate_limit, font_path=font_path,
         )
 
+    costs = tracker.estimate_cost()
+    elapsed = tracker.elapsed_seconds
+    mins = int(elapsed // 60)
+    secs = int(elapsed % 60)
+
     print("\n" + "=" * 65)
-    print(f"✅ DECK GENERATION COMPLETE: {name}")
+    print(f"DECK GENERATION COMPLETE: {name}")
     print(f"   Total Cards: {len(deck)}")
     if analyze:
-        print(f"   Venice Analysis: {stats['venice_success']} success | {stats['venice_fail']} failed")
+        print(
+            f"   Venice Analysis: "
+            f"{stats['venice_success']} success | "
+            f"{stats['venice_fail']} failed"
+        )
     if generate_images:
-        print(f"   Images Generated: {stats['image_success']} success | {stats['image_fail']} failed")
+        print(
+            f"   Images Generated: "
+            f"{stats['image_success']} success | "
+            f"{stats['image_fail']} failed"
+        )
+    print(f"   Tokens used: {tracker.total_tokens:,}")
+    print(f"   Estimated cost: ${costs['total']:.4f}")
+    print(f"   Time: {mins}m {secs}s")
     print(f"   Output folder: {Config.OUTPUT_DIR}/")
+    print(f"   Run --deck-stats {name} for full breakdown")
     print("=" * 65 + "\n")

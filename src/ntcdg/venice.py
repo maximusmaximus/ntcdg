@@ -13,7 +13,9 @@ from .models import Card
 
 # ==================== TEXT ANALYSIS ====================
 @retry_on_failure(max_retries=2, delay=1.5)
-def analyze_with_venice(card: Card, api_key: str, model: str) -> dict[str, Any]:
+def analyze_with_venice(
+    card: Card, api_key: str, model: str, tracker=None,
+) -> dict[str, Any]:
     """Analyze a card with Venice text model, returning enrichment fields."""
     if not api_key or not requests:
         return {"venice_error": "Missing API key or requests library"}
@@ -56,7 +58,19 @@ Return a JSON object with these fields:
             timeout=90,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
+        resp_json = resp.json()
+        raw = resp_json["choices"][0]["message"]["content"].strip()
+
+        # Track usage
+        if tracker:
+            usage = resp_json.get("usage", {})
+            tracker.record_text_call(
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                success=True,
+                purpose="analysis",
+            )
 
         # response_format should give clean JSON, but strip fences as fallback
         match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
@@ -67,6 +81,8 @@ Return a JSON object with these fields:
         return analysis
     except Exception as e:
         logger.error(f"Venice text analysis failed for card {card.position}: {e}")
+        if tracker:
+            tracker.record_text_call(model=model, success=False, purpose="analysis")
         return {"venice_error": str(e)}
 
 
@@ -81,6 +97,7 @@ def generate_image_with_venice(
     rate_limit_delay: float = 1.5,
     symbol_mode: str = "generate",
     symbol_images: dict[str, str] = None,
+    tracker=None,
 ) -> dict[str, Any]:
     """Generate a card image via Venice. Returns a dict of result fields."""
     if not api_key or not requests:
@@ -119,6 +136,10 @@ def generate_image_with_venice(
                     filepath = os.path.join(Config.IMAGES_DIR, filename)
                     with open(filepath, "wb") as f:
                         f.write(img_data)
+                    if tracker:
+                        tracker.record_image_call(
+                            model, image_size, success=True,
+                        )
                     return {
                         "image_path": filepath,
                         "image_model": model,
@@ -174,6 +195,10 @@ def generate_image_with_venice(
                 if edit_result.get("image_path"):
                     with contextlib.suppress(OSError):
                         os.remove(temp_path)
+                    if tracker:
+                        tracker.record_image_call(
+                            model, image_size, success=True,
+                        )
                     return {
                         "image_path": edit_result["image_path"],
                         "image_model": model,
@@ -196,6 +221,8 @@ def generate_image_with_venice(
 
     except Exception as e:
         logger.error(f"Image generation failed for card {card.position}: {e}")
+        if tracker:
+            tracker.record_image_call(model, image_size, success=False)
         return {"image_error": str(e)}
 
 
