@@ -65,8 +65,8 @@ class Config:
     DEFAULT_EDIT_MODEL = "flux-2-max-edit"
     # Vision: qwen2.5-vl — multimodal analysis for style extraction
     DEFAULT_VISION_MODEL = "qwen2.5-vl"
-    # Image size: 1024x1792 matches tarot card ratio (2.75:4.75 = 1:1.727)
-    DEFAULT_IMAGE_SIZE = "1024x1792"
+    # Image size: 832x1280 — portrait tarot ratio within Venice max (1280)
+    DEFAULT_IMAGE_SIZE = "832x1280"
 
     VENICE_BASE_URL = "https://api.venice.ai/api/v1"
     VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"

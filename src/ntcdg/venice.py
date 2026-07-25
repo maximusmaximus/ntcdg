@@ -24,8 +24,22 @@ def _parse_image_size(image_size: str) -> tuple[int, int]:
 
 def _build_image_request(model: str, prompt: str, image_size: str,
                          negative_prompt: str = "") -> dict[str, Any]:
-    """Build the Venice /image/generate request body."""
+    """Build the Venice /image/generate request body.
+
+    Venice enforces a max of 1280 for both width and height.
+    Dimensions are clamped down while preserving aspect ratio.
+    """
     width, height = _parse_image_size(image_size)
+    max_dim = 1280
+    if width > max_dim or height > max_dim:
+        scale = max_dim / max(width, height)
+        old_w, old_h = width, height
+        width = int(width * scale) // 8 * 8   # round to multiple of 8
+        height = int(height * scale) // 8 * 8
+        logger.warning(
+            f"Image size {old_w}x{old_h} exceeds Venice max ({max_dim}). "
+            f"Clamped to {width}x{height}."
+        )
     body: dict[str, Any] = {
         "model": model,
         "prompt": prompt,

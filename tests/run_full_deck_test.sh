@@ -30,7 +30,7 @@ NEGATIVE_PROMPT="color, colorful, painterly, soft, blurry, \
 realistic, photographic, gradients, watercolor, pastel, \
 busy backgrounds, cluttered, text, words, letters"
 
-IMAGE_SIZE="1024x1792"
+IMAGE_SIZE="832x1280"
 
 BACK_PROMPT="Stark black and white art deco sacred geometry mandala, \
 all-seeing eye at center surrounded by radiating triangles and \
