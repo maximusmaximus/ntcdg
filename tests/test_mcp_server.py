@@ -1,5 +1,6 @@
 """Tests for MCP server tool functions."""
 
+import os
 
 from ntcdg.models import Card
 
@@ -283,3 +284,100 @@ class TestAgenticTools:
         monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
         result = deck_progress("NoDeck")
         assert result["exists"] is False
+
+
+class TestSymbolRegistration:
+    """Test the register_symbols tool."""
+
+    def test_register_symbols(self, tmp_path, monkeypatch):
+        """Should copy images and create symbols.json."""
+        import json
+
+        from ntcdg.mcp_server import register_symbols
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        # Create fake symbol images
+        img1 = tmp_path / "serpent.png"
+        img2 = tmp_path / "eye.png"
+        img1.write_bytes(b"fake serpent image")
+        img2.write_bytes(b"fake eye image")
+
+        result = register_symbols(
+            deck_name="TestDeck",
+            symbols=[
+                {"name": "Serpent", "image_path": str(img1),
+                 "description": "A coiled serpent"},
+                {"name": "Eye", "image_path": str(img2),
+                 "description": "All-seeing eye"},
+            ],
+            auto_describe=False,
+        )
+
+        assert result["success"] is True
+        assert result["registered"] == 2
+        assert len(result["errors"]) == 0
+        assert os.path.exists(result["symbols_file"])
+
+        # Verify symbols.json content
+        with open(result["symbols_file"]) as f:
+            config = json.load(f)
+        assert len(config["symbols"]) == 2
+        assert config["symbols"][0]["name"] == "Serpent"
+        assert os.path.exists(config["symbols"][0]["image"])
+
+    def test_register_missing_image(self, tmp_path, monkeypatch):
+        """Should report errors for missing images."""
+        from ntcdg.mcp_server import register_symbols
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        result = register_symbols(
+            deck_name="TestDeck",
+            symbols=[
+                {"name": "Ghost", "image_path": "/nonexistent/ghost.png"},
+            ],
+            auto_describe=False,
+        )
+
+        assert result["registered"] == 0
+        assert len(result["errors"]) == 1
+        assert "not found" in result["errors"][0]["error"]
+
+    def test_register_missing_name(self, tmp_path, monkeypatch):
+        """Should report errors for missing names."""
+        from ntcdg.mcp_server import register_symbols
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        img = tmp_path / "unnamed.png"
+        img.write_bytes(b"data")
+
+        result = register_symbols(
+            deck_name="TestDeck",
+            symbols=[
+                {"image_path": str(img)},  # no name
+            ],
+            auto_describe=False,
+        )
+
+        assert result["registered"] == 0
+        assert len(result["errors"]) == 1
+
+    def test_register_includes_usage_hint(self, tmp_path, monkeypatch):
+        """Should include usage hint for next step."""
+        from ntcdg.mcp_server import register_symbols
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        img = tmp_path / "test.png"
+        img.write_bytes(b"data")
+
+        result = register_symbols(
+            deck_name="MyDeck",
+            symbols=[{"name": "Test", "image_path": str(img), "description": "test"}],
+            auto_describe=False,
+        )
+
+        assert "preview_style" in result["usage_hint"]
+        assert "symbol_mode" in result["usage_hint"]

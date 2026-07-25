@@ -523,6 +523,295 @@ def get_card_details(deck_name: str, card_num: int) -> dict[str, Any]:
     }
 
 
+# ==================== SYMBOL REGISTRATION ====================
+
+@mcp.tool()
+def register_symbols(
+    deck_name: str,
+    symbols: list[dict[str, str]],
+    auto_describe: bool = True,
+) -> dict[str, Any]:
+    """Register user-provided symbol artwork for a deck.
+
+    Call this when a user sends symbol images in Telegram. It copies
+    the images to a standard location and creates a symbols.json file
+    that can be passed to preview_style() and create_deck().
+
+    Args:
+        deck_name: Name of the deck these symbols are for
+        symbols: List of symbol definitions, each with:
+            - "name": symbol name (e.g., "Serpent")
+            - "image_path": absolute path to the image file
+            - "description": (optional) description of the symbol
+        auto_describe: If True, use Venice vision model to auto-generate
+            descriptions for symbols that don't have one
+
+    Example:
+        register_symbols("Gothic_Rose", [
+            {"name": "Serpent", "image_path": "/tmp/serpent.png"},
+            {"name": "Eye", "image_path": "/tmp/eye.png"},
+        ])
+    """
+    import json as json_mod
+    import shutil
+
+    symbols_dir = os.path.join(Config.OUTPUT_DIR, "symbols", deck_name)
+    os.makedirs(symbols_dir, exist_ok=True)
+
+    registered = []
+    errors = []
+
+    for sym in symbols:
+        name = sym.get("name", "")
+        src_path = sym.get("image_path", "")
+        description = sym.get("description", "")
+
+        if not name:
+            errors.append({"error": "Missing 'name' field", "input": sym})
+            continue
+        if not src_path or not os.path.exists(src_path):
+            errors.append({
+                "name": name,
+                "error": f"Image not found: {src_path}",
+            })
+            continue
+
+        # Copy image to symbols dir
+        ext = os.path.splitext(src_path)[1] or ".png"
+        safe_name = name.replace(" ", "_").replace("/", "-")[:30]
+        dest_filename = f"symbol_{safe_name}{ext}"
+        dest_path = os.path.join(symbols_dir, dest_filename)
+        shutil.copy2(src_path, dest_path)
+
+        registered.append({
+            "name": name,
+            "description": description,
+            "image": os.path.abspath(dest_path),
+        })
+
+    # Auto-describe symbols that lack descriptions
+    if auto_describe and registered:
+        needs_description = [s for s in registered if not s["description"]]
+        if needs_description:
+            try:
+                venice_key = _get_venice_key()
+                descriptions = _describe_artwork(
+                    [s["image"] for s in needs_description],
+                    [s["name"] for s in needs_description],
+                    venice_key,
+                )
+                for sym_entry, desc in zip(needs_description, descriptions, strict=False):
+                    sym_entry["description"] = desc
+            except Exception:
+                # Non-fatal: symbols work without descriptions
+                for sym_entry in needs_description:
+                    if not sym_entry["description"]:
+                        sym_entry["description"] = sym_entry["name"]
+
+    # Write symbols.json
+    symbols_config = {
+        "style_prompt": "",
+        "symbols": registered,
+    }
+    symbols_file = os.path.join(symbols_dir, "symbols.json")
+    with open(symbols_file, "w") as f:
+        json_mod.dump(symbols_config, f, indent=2)
+
+    return {
+        "success": True,
+        "symbols_file": os.path.abspath(symbols_file),
+        "symbols_dir": os.path.abspath(symbols_dir),
+        "registered": len(registered),
+        "errors": errors,
+        "symbols": [
+            {"name": s["name"], "description": s["description"][:80]}
+            for s in registered
+        ],
+        "usage_hint": (
+            f'Use with: preview_style(name="{deck_name}", '
+            f'symbol_mode="provide", symbols_file="{os.path.abspath(symbols_file)}")'
+        ),
+    }
+
+
+def _describe_artwork(
+    image_paths: list[str],
+    names: list[str],
+    api_key: str,
+) -> list[str]:
+    """Use Venice vision model to describe symbol artwork images.
+
+    Returns a list of descriptions, one per image.
+    """
+    from .config import requests as req_lib
+    if not req_lib:
+        return names
+
+    import base64 as b64mod
+
+    content: list[dict[str, Any]] = []
+    for path in image_paths:
+        try:
+            with open(path, "rb") as f:
+                b64 = b64mod.b64encode(f.read()).decode()
+            ext = os.path.splitext(path)[1].lstrip(".") or "png"
+            mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+        except Exception:
+            continue
+
+    if not content:
+        return names
+
+    names_str = ", ".join(names)
+    content.append({
+        "type": "text",
+        "text": (
+            f"These are {len(image_paths)} symbol artwork images named: {names_str}. "
+            "For each image, write a brief (10-15 word) description of what it "
+            "depicts and its artistic style. Return a JSON object with a "
+            "'descriptions' key containing a list of strings, one per image, "
+            "in the same order."
+        ),
+    })
+
+    try:
+        resp = req_lib.post(
+            Config.VENICE_TEXT_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": Config.DEFAULT_VISION_MODEL,
+                "messages": [{"role": "user", "content": content}],
+                "temperature": 0.3,
+                "max_tokens": 400,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+        import json as json_mod
+        import re
+        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
+        parsed_content = match.group(1).strip() if match else raw
+        data = json_mod.loads(parsed_content)
+        descriptions = data.get("descriptions", [])
+
+        # Pad if we got fewer than expected
+        while len(descriptions) < len(names):
+            descriptions.append(names[len(descriptions)])
+        return descriptions[:len(names)]
+
+    except Exception as e:
+        from .config import logger as _logger
+        _logger.warning(f"Auto-describe failed: {e}")
+        return names
+
+
+@mcp.tool()
+def describe_symbols(
+    image_paths: list[str],
+) -> dict[str, Any]:
+    """Analyze symbol artwork images and suggest names and descriptions.
+
+    Use this BEFORE register_symbols when the user sends images but
+    doesn't provide names. The agent can show the suggestions to the
+    user for confirmation before registering.
+
+    Args:
+        image_paths: List of absolute paths to symbol image files
+    """
+    venice_key = _get_venice_key()
+
+    try:
+        from .config import requests as req_lib
+    except ImportError:
+        return {"error": "requests library not available"}
+    if not req_lib:
+        return {"error": "requests library not available"}
+
+    import base64 as b64mod
+
+    content: list[dict[str, Any]] = []
+    valid_paths = []
+    for path in image_paths:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "rb") as f:
+                b64 = b64mod.b64encode(f.read()).decode()
+            ext = os.path.splitext(path)[1].lstrip(".") or "png"
+            mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            })
+            valid_paths.append(path)
+        except Exception:
+            continue
+
+    if not content:
+        return {"error": "No valid images found", "suggestions": []}
+
+    content.append({
+        "type": "text",
+        "text": (
+            f"These are {len(valid_paths)} artwork images intended as recurring "
+            "symbols for a custom tarot card deck. For each image, suggest:\n"
+            "1. A short symbolic name (1-2 words)\n"
+            "2. A description of what it depicts (10-15 words)\n"
+            "3. What it could symbolize in a tarot context\n\n"
+            "Return a JSON object with a 'symbols' key containing a list of "
+            "objects, each with 'name', 'description', and 'symbolism' fields. "
+            "Same order as the images."
+        ),
+    })
+
+    try:
+        resp = req_lib.post(
+            Config.VENICE_TEXT_URL,
+            headers={"Authorization": f"Bearer {venice_key}"},
+            json={
+                "model": Config.DEFAULT_VISION_MODEL,
+                "messages": [{"role": "user", "content": content}],
+                "temperature": 0.5,
+                "max_tokens": 600,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
+
+        import json as json_mod
+        import re
+        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
+        parsed_content = match.group(1).strip() if match else raw
+        data = json_mod.loads(parsed_content)
+
+        suggestions = data.get("symbols", [])
+        # Attach image paths
+        for i, suggestion in enumerate(suggestions):
+            if i < len(valid_paths):
+                suggestion["image_path"] = valid_paths[i]
+
+        return {
+            "count": len(suggestions),
+            "suggestions": suggestions,
+            "hint": (
+                "Review these with the user, then call register_symbols() "
+                "with the confirmed names and image_paths."
+            ),
+        }
+
+    except Exception as e:
+        return {"error": f"Symbol analysis failed: {e}"}
+
+
 # ==================== AGENTIC WORKFLOW TOOLS ====================
 
 @mcp.tool()
