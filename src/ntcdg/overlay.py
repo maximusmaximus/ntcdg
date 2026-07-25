@@ -119,6 +119,8 @@ def overlay_card_text(
     text_color: tuple = DEFAULT_TEXT_COLOR,
 ) -> str:
     """
+    DEPRECATED: Use compose_card() instead.
+
     Overlay title and number onto a card image with gradient banners.
 
     Layout:
@@ -190,3 +192,164 @@ def overlay_card_text(
 
     logger.debug(f"Text overlay applied: {number_text} / {title} → {image_path}")
     return image_path
+
+
+# ==================== CARD COMPOSITION ====================
+
+def _draw_corner_ornament(draw, x, y, size, color, corner):
+    """Draw art deco style corner accents."""
+    thickness = 2
+    if corner == "top_left":
+        draw.line([(x, y + size), (x, y), (x + size, y)], fill=color, width=thickness)
+        draw.ellipse([(x - 3, y - 3), (x + 3, y + 3)], fill=color)
+    elif corner == "top_right":
+        draw.line([(x - size, y), (x, y), (x, y + size)], fill=color, width=thickness)
+        draw.ellipse([(x - 3, y - 3), (x + 3, y + 3)], fill=color)
+    elif corner == "bottom_left":
+        draw.line([(x, y - size), (x, y), (x + size, y)], fill=color, width=thickness)
+        draw.ellipse([(x - 3, y - 3), (x + 3, y + 3)], fill=color)
+    elif corner == "bottom_right":
+        draw.line([(x - size, y), (x, y), (x, y - size)], fill=color, width=thickness)
+        draw.ellipse([(x - 3, y - 3), (x + 3, y + 3)], fill=color)
+
+
+def _draw_separator(draw, y, width, color):
+    """Draw decorative line between art and title."""
+    center_x = width // 2
+    draw.line([(60, y), (width - 60, y)], fill=color, width=1)
+    # Draw small diamond in center
+    draw.polygon([
+        (center_x, y - 4), (center_x + 4, y),
+        (center_x, y + 4), (center_x - 4, y)
+    ], fill=color)
+
+
+def _crop_to_fill(img, target_w, target_h):
+    """Crop and resize artwork to fill frame area."""
+    img_w, img_h = img.size
+    img_aspect = img_w / img_h
+    target_aspect = target_w / target_h
+
+    if img_aspect > target_aspect:
+        # Image is wider than target, crop width
+        new_w = int(img_h * target_aspect)
+        offset = (img_w - new_w) // 2
+        img = img.crop((offset, 0, offset + new_w, img_h))
+    elif img_aspect < target_aspect:
+        # Image is taller than target, crop height
+        new_h = int(img_w / target_aspect)
+        offset = (img_h - new_h) // 2
+        img = img.crop((0, offset, img_w, offset + new_h))
+
+    # Fallback to LANCZOS directly if available, or just resize
+    resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+    return img.resize((target_w, target_h), resample)
+
+def compose_card(
+    image_path: str,
+    title: str,
+    card_number: str = "",
+    card_type: str = "",
+    font_path: str = "",
+    frame_color: tuple = (200, 180, 130),  # warm gold
+    bg_color: tuple = (10, 10, 10),  # near black
+    text_color: tuple = (212, 195, 150),  # gold text
+) -> None:
+    """Compose a framed tarot card with decorative border and title.
+
+    Modifies the image file in-place, adding an art deco style frame,
+    corner ornaments, and a title panel at the bottom.
+    """
+    if not HAS_PILLOW:
+        logger.warning("Pillow not installed — skipping card composition")
+        return
+
+    if not os.path.exists(image_path):
+        logger.warning(f"Image not found for composition: {image_path}")
+        return
+
+    # Base canvas (832x1280)
+    canvas_w, canvas_h = 832, 1280
+    canvas = Image.new("RGB", (canvas_w, canvas_h), bg_color)
+    draw = ImageDraw.Draw(canvas)
+
+    # Outer frame
+    draw.rectangle([0, 0, canvas_w - 1, canvas_h - 1], outline=frame_color, width=2)
+
+    # Inner border line (16px margin)
+    inner_margin = 16
+    inner_color = (160, 140, 100)
+    draw.rectangle([
+        inner_margin, inner_margin,
+        canvas_w - inner_margin - 1, canvas_h - inner_margin - 1
+    ], outline=inner_color, width=1)
+
+    # Corner ornaments
+    ornament_size = 10
+    _draw_corner_ornament(draw, inner_margin + 4, inner_margin + 4, ornament_size, inner_color, "top_left")
+    _draw_corner_ornament(
+        draw, canvas_w - inner_margin - 5, inner_margin + 4,
+        ornament_size, inner_color, "top_right"
+    )
+    _draw_corner_ornament(
+        draw, inner_margin + 4, canvas_h - inner_margin - 5,
+        ornament_size, inner_color, "bottom_left"
+    )
+    _draw_corner_ornament(
+        draw, canvas_w - inner_margin - 5, canvas_h - inner_margin - 5,
+        ornament_size, inner_color, "bottom_right"
+    )
+
+    # Artwork area
+    art_x, art_y = 20, 20
+    title_height = 110
+    art_w = canvas_w - 40
+    art_h = canvas_h - 40 - title_height
+
+    # Load and resize artwork
+    img = Image.open(image_path).convert("RGB")
+    art_img = _crop_to_fill(img, art_w, art_h)
+    canvas.paste(art_img, (art_x, art_y))
+
+    # Inner border around artwork itself to make it pop
+    draw.rectangle([art_x - 1, art_y - 1, art_x + art_w, art_y + art_h], outline=inner_color, width=1)
+
+    # Decorative separator
+    separator_y = art_y + art_h + 15
+    _draw_separator(draw, separator_y, canvas_w, inner_color)
+
+    # Title panel text
+    title_font_size = 32
+    number_font_size = 20
+    title_font = _find_font(font_path, size=title_font_size)
+    number_font = _find_font(font_path, size=number_font_size)
+
+    # Draw Title
+    title_y = separator_y + 35
+    _draw_text_with_shadow(
+        draw, title.upper(),
+        position=(canvas_w // 2, title_y),
+        font=title_font, fill=text_color,
+        shadow_offset=2,
+    )
+
+    # Draw Number/Type
+    number_color = (160, 145, 110)
+    subtitle = ""
+    if card_number:
+        subtitle += str(card_number)
+    if subtitle and card_type:
+        subtitle += " - "
+    if card_type:
+        subtitle += card_type
+
+    _draw_text_with_shadow(
+        draw, subtitle.upper(),
+        position=(canvas_w // 2, title_y + 35),
+        font=number_font, fill=number_color,
+        shadow_offset=1,
+    )
+
+    # Save
+    canvas.save(image_path, quality=95)
+    logger.debug(f"Card composed: {title} → {image_path}")

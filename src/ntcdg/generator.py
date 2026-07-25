@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
-from .overlay import get_card_number_text, overlay_card_text
+from .overlay import compose_card, get_card_number_text
 from .storage import load_deck, save_deck, update_deck_index
 from .style import extract_deck_style, refine_card_prompt
 from .symbols import generate_symbol_images, load_symbols_config
@@ -338,9 +338,12 @@ def interactive_review(
             )
             card.update(result)
             if card.image_path:
-                overlay_card_text(
-                    card.image_path, card.display_title(),
-                    get_card_number_text(card), font_path=font_path,
+                compose_card(
+                    image_path=card.image_path,
+                    title=card.display_title(),
+                    card_number=get_card_number_text(card),
+                    card_type=card.card_type,
+                    font_path=font_path,
                 )
                 print("  → New image generated + text overlay applied")
 
@@ -447,9 +450,12 @@ def preview_deck_style(
             preview_path = os.path.join(preview_dir, preview_name)
             shutil.copy2(card.image_path, preview_path)
             # Apply text overlay to preview
-            overlay_card_text(
-                preview_path, card.display_title(),
-                get_card_number_text(card), font_path=font_path,
+            compose_card(
+                image_path=preview_path,
+                title=card.display_title(),
+                card_number=get_card_number_text(card),
+                card_type=card.card_type,
+                font_path=font_path,
             )
             preview_paths.append(preview_path)
             print(f"  Preview {i + 1}: {card_def['title']:<20} -> {preview_path}")
@@ -736,9 +742,12 @@ def generate_deck(
             )
             card.update(result)
             if card.image_path:
-                overlay_card_text(
-                    card.image_path, card.display_title(),
-                    get_card_number_text(card), font_path=font_path,
+                compose_card(
+                    image_path=card.image_path,
+                    title=card.display_title(),
+                    card_number=get_card_number_text(card),
+                    card_type=card.card_type,
+                    font_path=font_path,
                 )
                 stats["image_success"] += 1
             else:
