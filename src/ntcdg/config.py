@@ -70,7 +70,7 @@ class Config:
 
     VENICE_BASE_URL = "https://api.venice.ai/api/v1"
     VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"
-    VENICE_IMAGE_URL = f"{VENICE_BASE_URL}/image/generations"
+    VENICE_IMAGE_URL = f"{VENICE_BASE_URL}/image/generate"
     VENICE_EDIT_URL = f"{VENICE_BASE_URL}/image/edit"
     VENICE_MODELS_URL = f"{VENICE_BASE_URL}/models"
 

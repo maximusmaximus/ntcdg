@@ -11,6 +11,43 @@ from .config import Config, logger, requests, retry_on_failure
 from .models import Card
 
 
+def _parse_image_size(image_size: str) -> tuple[int, int]:
+    """Parse 'WIDTHxHEIGHT' string into (width, height) integers."""
+    parts = image_size.lower().split("x")
+    if len(parts) == 2:
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            pass
+    return 1024, 1024
+
+
+def _build_image_request(model: str, prompt: str, image_size: str,
+                         negative_prompt: str = "") -> dict[str, Any]:
+    """Build the Venice /image/generate request body."""
+    width, height = _parse_image_size(image_size)
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+    }
+    if negative_prompt:
+        body["negative_prompt"] = negative_prompt
+    body["width"] = width
+    body["height"] = height
+    return body
+
+
+def _extract_image_b64(data: dict) -> str | None:
+    """Extract base64 image data from Venice response."""
+    # Venice native format: {"images": ["base64..."]}
+    if data.get("images") and len(data["images"]) > 0:
+        return data["images"][0]
+    # OpenAI-compat fallback: {"data": [{"b64_json": "..."}]}
+    if data.get("data") and len(data["data"]) > 0:
+        return data["data"][0].get("b64_json")
+    return None
+
+
 # ==================== TEXT ANALYSIS ====================
 @retry_on_failure(max_retries=2, delay=1.5)
 def analyze_with_venice(
@@ -118,28 +155,22 @@ def generate_image_with_venice(
             resp = requests.post(
                 Config.VENICE_IMAGE_URL,
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "prompt": full_prompt,
-                    "negative_prompt": neg_prompt,
-                    "n": 1,
-                    "size": image_size,
-                    "response_format": "b64_json",
-                },
+                json=_build_image_request(
+                    model, full_prompt, image_size, neg_prompt,
+                ),
                 timeout=180,
             )
             resp.raise_for_status()
             data = resp.json()
 
-            if data.get("data"):
-                b64 = data["data"][0].get("b64_json")
-                if b64:
-                    img_data = base64.b64decode(b64)
-                    safe_title = str(card.title).replace(" ", "_")[:40]
-                    filename = f"{card.position:03d}_{safe_title}.png"
-                    filepath = os.path.join(Config.IMAGES_DIR, filename)
-                    with open(filepath, "wb") as f:
-                        f.write(img_data)
+            b64 = _extract_image_b64(data)
+            if b64:
+                img_data = base64.b64decode(b64)
+                safe_title = str(card.title).replace(" ", "_")[:40]
+                filename = f"{card.position:03d}_{safe_title}.png"
+                filepath = os.path.join(Config.IMAGES_DIR, filename)
+                with open(filepath, "wb") as f:
+                    f.write(img_data)
                     if tracker:
                         tracker.record_image_call(
                             model, image_size, success=True,
@@ -156,23 +187,15 @@ def generate_image_with_venice(
             base_resp = requests.post(
                 Config.VENICE_IMAGE_URL,
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "model": model,
-                    "prompt": full_prompt,
-                    "negative_prompt": neg_prompt,
-                    "n": 1,
-                    "size": image_size,
-                    "response_format": "b64_json",
-                },
+                json=_build_image_request(
+                    model, full_prompt, image_size, neg_prompt,
+                ),
                 timeout=180,
             )
             base_resp.raise_for_status()
             base_data = base_resp.json()
 
-            if "data" not in base_data or not base_data["data"]:
-                return {"image_error": "Failed to generate base image"}
-
-            b64 = base_data["data"][0].get("b64_json")
+            b64 = _extract_image_b64(base_data)
             if not b64:
                 return {"image_error": "No base image data"}
 
@@ -312,29 +335,23 @@ def generate_card_back(
         resp = requests.post(
             Config.VENICE_IMAGE_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "prompt": prompt,
-                "negative_prompt": neg,
-                "n": 1,
-                "size": image_size,
-                "response_format": "b64_json",
-            },
+            json=_build_image_request(
+                model, prompt, image_size, neg,
+            ),
             timeout=180,
         )
         resp.raise_for_status()
         data = resp.json()
 
-        if data.get("data"):
-            b64 = data["data"][0].get("b64_json")
-            if b64:
-                os.makedirs(Config.IMAGES_DIR, exist_ok=True)
-                filename = f"{deck_name}_BACK.png"
-                filepath = os.path.join(Config.IMAGES_DIR, filename)
-                with open(filepath, "wb") as f:
-                    f.write(base64.b64decode(b64))
-                logger.info(f"Card back saved: {filepath}")
-                return filepath
+        b64 = _extract_image_b64(data)
+        if b64:
+            os.makedirs(Config.IMAGES_DIR, exist_ok=True)
+            filename = f"{deck_name}_BACK.png"
+            filepath = os.path.join(Config.IMAGES_DIR, filename)
+            with open(filepath, "wb") as f:
+                f.write(base64.b64decode(b64))
+            logger.info(f"Card back saved: {filepath}")
+            return filepath
 
         logger.error("No image data in Venice response for card back")
         return ""

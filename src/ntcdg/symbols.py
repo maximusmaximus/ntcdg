@@ -159,29 +159,24 @@ def _generate_single_symbol(
 
     time.sleep(rate_limit)
 
+    from .venice import _build_image_request, _extract_image_b64
     resp = requests.post(
         Config.VENICE_IMAGE_URL,
         headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": model,
-            "prompt": prompt,
-            "negative_prompt": Config.DEFAULT_NEGATIVE_PROMPT,
-            "n": 1,
-            "size": "1024x1024",
-            "response_format": "b64_json",
-        },
+        json=_build_image_request(
+            model, prompt, "1024x1024", Config.DEFAULT_NEGATIVE_PROMPT,
+        ),
         timeout=180,
     )
     resp.raise_for_status()
     data = resp.json()
 
-    if data.get("data"):
-        b64 = data["data"][0].get("b64_json")
-        if b64:
-            safe_name = name.replace(" ", "_").replace("/", "-")[:30]
-            filename = f"symbol_{safe_name}.png"
-            filepath = os.path.join(output_dir, filename)
-            with open(filepath, "wb") as f:
-                f.write(base64.b64decode(b64))
-            return filepath
+    b64 = _extract_image_b64(data)
+    if b64:
+        safe_name = name.replace(" ", "_").replace("/", "-")[:30]
+        filename = f"symbol_{safe_name}.png"
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(base64.b64decode(b64))
+        return filepath
     return None
