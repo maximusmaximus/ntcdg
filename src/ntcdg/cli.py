@@ -96,6 +96,10 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
         "--resume", action="store_true",
         help="Resume generation, skipping completed cards",
     )
+    gen.add_argument(
+        "--no-preview", action="store_true",
+        help="Skip the 3-card style preview (generate all cards immediately)",
+    )
 
     # === VENICE API OPTIONS ===
     api = parser.add_argument_group("Venice API")
@@ -283,6 +287,7 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             symbols_file=args.symbols_file,
             font_path=args.font,
             resume=True,  # resume mode skips completed cards
+            preview=False,  # no preview for retries
         )
 
     elif args.set_back:
@@ -363,6 +368,7 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             symbols_file=args.symbols_file,
             font_path=args.font,
             resume=args.resume,
+            preview=not args.no_preview,
         )
 
     else:

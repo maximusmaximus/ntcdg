@@ -375,6 +375,129 @@ def review_existing_deck(
     )
 
 
+# ==================== STYLE PREVIEW ====================
+_PREVIEW_CARDS = [
+    {"title": "The Fool", "type": "Major Arcana", "arcana_number": 0},
+    {"title": "Queen of Cups", "type": "Minor Arcana", "suit": "Cups", "rank": "Queen"},
+    {"title": "Five of Swords", "type": "Minor Arcana", "suit": "Swords", "rank": 5},
+]
+
+
+def preview_deck_style(
+    deck_style: str,
+    deck_vibe: str,
+    deck_prompt: str,
+    deck_name: str,
+    venice_key: str,
+    text_model: str,
+    image_model: str,
+    image_size: str,
+    negative_prompt: str,
+    rate_limit: float,
+    symbols: list[dict[str, Any]] = None,
+    symbol_mode: str = "generate",
+    symbol_images: dict[str, str] = None,
+    font_path: str = None,
+) -> tuple[bool, str, str]:
+    """Generate 3 preview cards and ask user to approve the style.
+
+    Returns (approved, new_vibe, new_prompt):
+    - approved=True: proceed with full generation
+    - approved=False: user cancelled
+    - new_vibe/new_prompt: updated values if user chose to adjust
+    """
+    preview_dir = os.path.join(Config.IMAGES_DIR, "previews")
+    os.makedirs(preview_dir, exist_ok=True)
+
+    print("\nGenerating 3 preview cards to validate style...")
+    print(f"Style: {deck_style[:80]}..." if len(deck_style) > 80 else f"Style: {deck_style}")
+
+    preview_paths = []
+    for i, card_def in enumerate(_PREVIEW_CARDS):
+        card = generate_card(
+            position=i + 1, total=3, card_def=card_def,
+            deck_vibe=deck_vibe, deck_prompt=deck_prompt,
+            symbols=symbols or Config.DEFAULT_SYMBOLS,
+        )
+
+        # Refine prompt with style
+        if deck_style and venice_key:
+            card.prompt = refine_card_prompt(
+                card, deck_style, venice_key, text_model,
+            )
+        else:
+            card.prompt = build_card_prompt(card, deck_style)
+
+        # Generate the preview image
+        result = generate_image_with_venice(
+            card, venice_key, image_model,
+            image_size=image_size,
+            negative_prompt=negative_prompt,
+            rate_limit_delay=rate_limit,
+            symbol_mode=symbol_mode,
+            symbol_images=symbol_images or {},
+        )
+        card.update(result)
+
+        if card.image_path:
+            # Move to preview dir with descriptive name
+            import shutil
+            preview_name = f"{deck_name}_preview_{i + 1}_{card_def['title'].replace(' ', '_')}.png"
+            preview_path = os.path.join(preview_dir, preview_name)
+            shutil.copy2(card.image_path, preview_path)
+            # Apply text overlay to preview
+            overlay_card_text(
+                preview_path, card.display_title(),
+                get_card_number_text(card), font_path=font_path,
+            )
+            preview_paths.append(preview_path)
+            print(f"  Preview {i + 1}: {card_def['title']:<20} -> {preview_path}")
+        else:
+            err = result.get("image_error", "unknown error")
+            print(f"  Preview {i + 1}: {card_def['title']:<20} -> FAILED ({err})")
+
+    if not preview_paths:
+        print("\nAll previews failed. Check your API key and settings.")
+        return False, deck_vibe, deck_prompt
+
+    # Ask user what to do
+    print(f"\n{'=' * 55}")
+    print(f"  {len(preview_paths)} preview cards generated")
+    print(f"  Check them in: {preview_dir}/")
+    print(f"{'=' * 55}")
+
+    while True:
+        print("\nWhat would you like to do?")
+        print("  1. Approve  -- continue generating all cards")
+        print("  2. Adjust   -- change vibe/prompt, regenerate previews")
+        print("  3. Cancel   -- stop generation")
+
+        choice = input("\nChoose [1-3]: ").strip()
+
+        if choice == "1":
+            return True, deck_vibe, deck_prompt
+
+        elif choice == "2":
+            print(f"\nCurrent vibe: {deck_vibe}")
+            new_vibe = input("New vibe (or Enter to keep): ").strip()
+            if not new_vibe:
+                new_vibe = deck_vibe
+
+            print(f"Current prompt: {deck_prompt or '(none)'}")
+            new_prompt = input("New prompt (or Enter to keep): ").strip()
+            if not new_prompt:
+                new_prompt = deck_prompt
+
+            return True, new_vibe, new_prompt  # caller will re-extract style
+
+        elif choice == "3":
+            print("Generation cancelled.")
+            return False, deck_vibe, deck_prompt
+
+        else:
+            print("  Please enter 1, 2, or 3.")
+
+
 # ==================== MAIN GENERATION ====================
 def generate_deck(
     name: str,
@@ -394,6 +517,7 @@ def generate_deck(
     symbols_file: str = None,
     font_path: str = None,
     resume: bool = False,
+    preview: bool = True,
 ):
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
@@ -454,6 +578,49 @@ def generate_deck(
             )
         else:
             logger.warning("Style extraction failed, using template prompts")
+
+    # --- Style preview: generate 3 samples before full run ---
+    if generate_images and venice_key and deck_style and preview and interactive:
+        approved = False
+        while not approved:
+            approved, new_vibe, new_prompt = preview_deck_style(
+                deck_style=deck_style,
+                deck_vibe=deck_vibe,
+                deck_prompt=deck_prompt,
+                deck_name=name,
+                venice_key=venice_key,
+                text_model=text_model,
+                image_model=image_model,
+                image_size=image_size,
+                negative_prompt=negative_prompt,
+                rate_limit=rate_limit,
+                symbols=symbols_config["symbols"],
+                symbol_mode=symbol_mode,
+                symbol_images=symbol_images,
+                font_path=font_path,
+            )
+            if not approved:
+                return  # User cancelled
+
+            # If user adjusted vibe/prompt, re-extract style
+            if new_vibe != deck_vibe or new_prompt != deck_prompt:
+                deck_vibe = new_vibe
+                deck_prompt = new_prompt
+                logger.info("Re-extracting deck style with updated inputs...")
+                symbol_descs = [
+                    s.get("description", s.get("name", ""))
+                    for s in symbols_config["symbols"]
+                ]
+                deck_style = extract_deck_style(
+                    symbol_images=symbol_images,
+                    symbol_descriptions=symbol_descs,
+                    vibe=deck_vibe,
+                    deck_prompt=deck_prompt,
+                    api_key=venice_key,
+                    text_model=text_model,
+                )
+                approved = False  # Loop back to preview with new style
+            # else: approved=True, break loop
 
     deck: list[Card] = []
 
