@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--venice-text-model", type=str, default=Config.DEFAULT_TEXT_MODEL)
     parser.add_argument("--generate-images", action="store_true")
     parser.add_argument("--venice-image-model", type=str, default=Config.DEFAULT_IMAGE_MODEL)
-    parser.add_argument("--image-size", type=str, default="1024x1536")
+    parser.add_argument("--image-size", type=str, default=Config.DEFAULT_IMAGE_SIZE)
     parser.add_argument("--negative-prompt", type=str, default="")
     parser.add_argument("--rate-limit", type=float, default=1.5)
 

@@ -63,6 +63,10 @@ class Config:
     DEFAULT_IMAGE_MODEL = "flux-2-pro"
     # Image edit: flux-2-max-edit — high-quality inpainting/style transfer
     DEFAULT_EDIT_MODEL = "flux-2-max-edit"
+    # Vision: qwen2.5-vl — multimodal analysis for style extraction
+    DEFAULT_VISION_MODEL = "qwen2.5-vl"
+    # Image size: 1024x1792 matches tarot card ratio (2.75:4.75 = 1:1.727)
+    DEFAULT_IMAGE_SIZE = "1024x1792"
 
     VENICE_BASE_URL = "https://api.venice.ai/api/v1"
     VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"
@@ -74,8 +78,12 @@ class Config:
     SYMBOLS_DIR = "symbols"
 
     DEFAULT_NEGATIVE_PROMPT = (
-        "text, letters, watermark, signature, blurry, low quality, deformed, "
-        "extra limbs, mutated hands, poorly drawn face, bad anatomy, artifacts"
+        "text, letters, words, titles, numbers, watermark, signature, "
+        "card border, card frame, title bar, banner, label, caption, "
+        "blurry, low quality, low resolution, jpeg artifacts, noise, "
+        "deformed, extra limbs, mutated hands, fused fingers, "
+        "poorly drawn face, bad anatomy, distorted proportions, "
+        "ugly, duplicate, morbid, out of frame, cropped"
     )
 
     # Default symbol definitions — used when no symbols.json is provided

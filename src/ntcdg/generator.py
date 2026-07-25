@@ -8,7 +8,8 @@ from typing import Any
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
 from .overlay import get_card_number_text, overlay_card_text
-from .storage import load_deck, save_deck
+from .storage import load_deck, save_deck, update_deck_index
+from .style import extract_deck_style, refine_card_prompt
 from .symbols import generate_symbol_images, load_symbols_config
 from .venice import analyze_with_venice, generate_image_with_venice
 
@@ -129,29 +130,49 @@ def generate_card(
     return card
 
 
-def build_card_prompt(card: Card) -> str:
-    """Build the image generation prompt for a card."""
-    base = (
-        f"Highly detailed symbolic tarot card artwork in portrait orientation. "
-        f"Scene: {card.card_type} — '{card.title}'. "
-        f"Visual elements: {', '.join(card.symbols)}. "
-        f"Composition and layout: {card.layout}. "
-    )
+def build_card_prompt(card: Card, deck_style: str = "") -> str:
+    """Build the image generation prompt for a card.
+
+    When a deck_style is available, it is used as the foundation.
+    Otherwise, falls back to a generic stylistic template.
+    """
+    if deck_style:
+        # Style-driven prompt
+        base = (
+            f"{deck_style} "
+            f"Tarot card in portrait orientation. "
+            f"{card.card_type}: '{card.title}'. "
+            f"Visual elements: {', '.join(card.symbols)}. "
+            f"Composition: {card.layout}. "
+        )
+    else:
+        # Legacy fallback
+        base = (
+            f"Highly detailed symbolic tarot card artwork in "
+            f"portrait orientation. "
+            f"Scene: {card.card_type} -- '{card.title}'. "
+            f"Visual elements: {', '.join(card.symbols)}. "
+            f"Composition and layout: {card.layout}. "
+        )
 
     if card.is_first:
-        base += "This is the FIRST card of the deck — representing origins and new beginnings. "
+        base += "First card of the deck -- origins and new beginnings. "
     if card.is_last:
-        base += "This is the FINAL card of the deck — representing culmination and full synthesis. "
+        base += "Final card of the deck -- culmination and synthesis. "
 
     if card.deck_prompt:
-        base += f"Overall deck theme: {card.deck_prompt}. "
+        base += f"Theme: {card.deck_prompt}. "
+
+    if not deck_style:
+        # Only add generic style when no deck style is set
+        base += (
+            "Rich cinematic lighting, high symbolic density, "
+            "professional quality, dramatic composition. "
+        )
 
     base += (
-        "Psychedelic neon glitch vortex meme aesthetics fused with intricate "
-        "Rider-Waite symbolic linework. High symbolic density, electric colors, "
-        "dramatic cinematic lighting, glowing energy flows. "
-        "Do NOT render any text, letters, numbers, titles, or words on the card. "
-        "Leave the top and bottom edges slightly darker for a clean gradient border."
+        "Do NOT render any text, letters, numbers, titles, or words "
+        "on the card."
     )
     return base
 
@@ -401,13 +422,38 @@ def generate_deck(
         if s.get("image") and os.path.exists(str(s["image"])):
             symbol_images[s["name"]] = s["image"]
 
-    # Build canonical deck structure — guarantees unique cards
+    # Build canonical deck structure -- guarantees unique cards
     card_defs = build_canonical_deck(num_cards)
     logger.info(
         f"Canonical deck: "
         f"{sum(1 for c in card_defs if c['type'] == 'Major Arcana')} Major + "
         f"{sum(1 for c in card_defs if c['type'] == 'Minor Arcana')} Minor Arcana"
     )
+
+    # --- Extract deck style (meta prompt for all artwork) ---
+    deck_style = ""
+    if generate_images and venice_key:
+        symbol_descs = [
+            s.get("description", s.get("name", ""))
+            for s in symbols_config["symbols"]
+        ]
+        logger.info("Extracting deck style...")
+        deck_style = extract_deck_style(
+            symbol_images=symbol_images,
+            symbol_descriptions=symbol_descs,
+            vibe=deck_vibe,
+            deck_prompt=deck_prompt,
+            api_key=venice_key,
+            text_model=text_model,
+        )
+        if deck_style:
+            logger.info(f"Deck style locked ({len(deck_style)} chars)")
+            # Persist style in deck index
+            update_deck_index(
+                name, num_cards, vibe=deck_vibe, theme=deck_prompt,
+            )
+        else:
+            logger.warning("Style extraction failed, using template prompts")
 
     deck: list[Card] = []
 
@@ -456,6 +502,18 @@ def generate_deck(
             position, num_cards, card_def, deck_vibe, deck_prompt,
             symbols=symbols_config["symbols"],
         )
+
+        # --- Refine prompt with LLM (style-aware) ---
+        if generate_images and venice_key and deck_style:
+            if HAS_TQDM:
+                iterator.set_description(
+                    f"Card {position}/{num_cards} - Prompt"
+                )
+            card.prompt = refine_card_prompt(
+                card, deck_style, venice_key, text_model,
+            )
+        else:
+            card.prompt = build_card_prompt(card, deck_style)
 
         if analyze and venice_key:
             if HAS_TQDM:
