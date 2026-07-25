@@ -57,8 +57,8 @@ class Config:
     DECKS_INDEX_FILE = os.path.join(OUTPUT_DIR, "decks_index.json")
 
     # --- Model defaults (best-fit per task as of 2026) ---
-    # Text: deepseek-v3.2 — strong structured JSON output + reasoning
-    DEFAULT_TEXT_MODEL = "deepseek-v3.2"
+    # Text: llama-3.3-70b — fast structured JSON, no reasoning overhead
+    DEFAULT_TEXT_MODEL = "llama-3.3-70b"
     # Image gen: flux-2-pro — best prompt adherence + detail for card art
     DEFAULT_IMAGE_MODEL = "flux-2-pro"
     # Image edit: flux-2-max-edit — high-quality inpainting/style transfer
