@@ -34,6 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = [
+    "mcp[cli]>=1.0.0",
+]
 dev = [
     "ruff",
     "mypy",
@@ -43,6 +46,7 @@ dev = [
 [project.scripts]
 ntcdg = "ntcdg.cli:main"
 ntcdg-tui = "ntcdg.tui:main"
+ntcdg-mcp = "ntcdg.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/maximusmaximus/ntcdg"
@@ -70,6 +74,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "src/ntcdg/__init__.py" = ["F401"]  # Re-exports
 "src/ntcdg/config.py" = ["F401"]    # Feature-detection imports (reportlab)
+"src/ntcdg/mcp_server.py" = ["E402"]  # Import after MCP feature detection
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
