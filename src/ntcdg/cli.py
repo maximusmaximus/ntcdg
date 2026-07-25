@@ -213,6 +213,23 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
 
     venice_key = args.venice_key or os.getenv("VENICE_API_KEY")
 
+    # Prompt for API key if needed but missing
+    if not venice_key and any([
+        args.deck and (args.analyze or args.generate_images),
+        getattr(args, 'set_back', None),
+        getattr(args, 'retry_failed', None),
+    ]):
+        print("\nVenice API key is required for this operation.")
+        print("Set it permanently: add venice_api_key to ~/.ntcdgrc")
+        try:
+            venice_key = input("Paste your Venice API key to continue: ").strip()
+            if not venice_key:
+                print("No key provided. Aborting.")
+                raise SystemExit(1)
+        except (EOFError, KeyboardInterrupt):
+            print("\nNo key provided. Aborting.")
+            raise SystemExit(1) from None
+
     # ============ COMMAND DISPATCH ============
 
     if args.init_config:

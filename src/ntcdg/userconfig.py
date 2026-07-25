@@ -26,7 +26,12 @@ RC_PATHS = [
 
 
 def _parse_rc_file(path: str) -> dict[str, str]:
-    """Parse a simple key: value config file (YAML-lite)."""
+    """Parse a simple key: value config file (YAML-lite).
+
+    Supports both ':' and '=' as delimiters:
+        venice_api_key: sk-xxx
+        venice_api_key = sk-xxx
+    """
     config: dict[str, str] = {}
     try:
         with open(path) as f:
@@ -34,9 +39,13 @@ def _parse_rc_file(path: str) -> dict[str, str]:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                if ":" not in line:
+                # Support both : and = as delimiters
+                if "=" in line and ":" not in line:
+                    key, _, value = line.partition("=")
+                elif ":" in line:
+                    key, _, value = line.partition(":")
+                else:
                     continue
-                key, _, value = line.partition(":")
                 key = key.strip()
                 value = value.strip()
                 # Strip surrounding quotes

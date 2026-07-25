@@ -531,6 +531,21 @@ def generate_deck(
 
     logger.info(f"Starting deck: {name} ({num_cards} cards)")
 
+    # --- Validate API key ---
+    if (analyze or generate_images) and not venice_key:
+        print("\n" + "=" * 60)
+        print("  ERROR: Venice API key is required")
+        print("=" * 60)
+        print("  You requested --analyze and/or --generate-images but no")
+        print("  Venice API key was found.")
+        print("")
+        print("  Set it via:")
+        print("    export VENICE_API_KEY='your-key-here'")
+        print("    or: ntcdg --venice-key 'your-key-here' ...")
+        print("    or: add venice_api_key to ~/.ntcdgrc")
+        print("=" * 60 + "\n")
+        raise SystemExit(1)
+
     # --- Load and prepare symbols ---
     symbols_config = load_symbols_config(symbols_file)
 

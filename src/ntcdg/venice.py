@@ -17,8 +17,10 @@ def analyze_with_venice(
     card: Card, api_key: str, model: str, tracker=None,
 ) -> dict[str, Any]:
     """Analyze a card with Venice text model, returning enrichment fields."""
-    if not api_key or not requests:
-        return {"venice_error": "Missing API key or requests library"}
+    if not api_key:
+        return {"venice_error": "Venice API key not provided"}
+    if not requests:
+        return {"venice_error": "Missing requests library"}
 
     system = (
         "You are an expert tarot symbologist and card designer. "
@@ -100,8 +102,10 @@ def generate_image_with_venice(
     tracker=None,
 ) -> dict[str, Any]:
     """Generate a card image via Venice. Returns a dict of result fields."""
-    if not api_key or not requests:
-        return {"image_error": "Missing API key or requests"}
+    if not api_key:
+        return {"image_error": "Venice API key not provided"}
+    if not requests:
+        return {"image_error": "Missing requests library"}
 
     time.sleep(rate_limit_delay)
 
