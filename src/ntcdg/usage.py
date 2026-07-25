@@ -13,6 +13,7 @@ from typing import Any
 PRICING = {
     "text": {
         "deepseek-v3.2": {"input": 0.0014, "output": 0.0028},  # per 1K tokens
+        "llama-3.3-70b": {"input": 0.0015, "output": 0.0030},
         "qwen2.5-vl": {"input": 0.0020, "output": 0.0040},
         "_default": {"input": 0.0015, "output": 0.0030},
     },

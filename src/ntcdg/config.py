@@ -63,8 +63,8 @@ class Config:
     DEFAULT_IMAGE_MODEL = "flux-2-pro"
     # Image edit: flux-2-max-edit — high-quality inpainting/style transfer
     DEFAULT_EDIT_MODEL = "flux-2-max-edit"
-    # Vision: qwen2.5-vl — multimodal analysis for style extraction
-    DEFAULT_VISION_MODEL = "qwen2.5-vl"
+    # Vision: llama-3.3-70b — text-only fallback since Venice multimodal endpoints are not available
+    DEFAULT_VISION_MODEL = "llama-3.3-70b"
     # Image size: 832x1280 — portrait tarot ratio within Venice max (1280)
     DEFAULT_IMAGE_SIZE = "832x1280"
 

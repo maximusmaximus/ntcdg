@@ -16,8 +16,8 @@ class TestUsageTracker:
     def test_record_text_call(self):
         """Should accumulate text call stats."""
         t = UsageTracker()
-        t.record_text_call("deepseek-v3.2", prompt_tokens=500, completion_tokens=200)
-        t.record_text_call("deepseek-v3.2", prompt_tokens=300, completion_tokens=100)
+        t.record_text_call("llama-3.3-70b", prompt_tokens=500, completion_tokens=200)
+        t.record_text_call("llama-3.3-70b", prompt_tokens=300, completion_tokens=100)
         assert t.text_calls == 2
         assert t.prompt_tokens == 800
         assert t.completion_tokens == 300
@@ -26,36 +26,36 @@ class TestUsageTracker:
     def test_record_text_failure(self):
         """Failed calls should increment failure counter."""
         t = UsageTracker()
-        t.record_text_call("deepseek-v3.2", success=False)
+        t.record_text_call("llama-3.3-70b", success=False)
         assert t.text_calls == 1
         assert t.text_calls_failed == 1
 
     def test_record_image_call(self):
         """Should count image calls."""
         t = UsageTracker()
-        t.record_image_call("flux-2-pro", "1024x1792")
-        t.record_image_call("flux-2-pro", "1024x1792")
-        t.record_image_call("flux-2-pro", "1024x1792", success=False)
+        t.record_image_call("flux-2-pro", "832x1280")
+        t.record_image_call("flux-2-pro", "832x1280")
+        t.record_image_call("flux-2-pro", "832x1280", success=False)
         assert t.image_calls == 3
         assert t.image_calls_failed == 1
 
     def test_preview_tracking(self):
         """Preview calls should be tracked separately."""
         t = UsageTracker()
-        t.record_image_call("flux-2-pro", "1024x1792", purpose="preview")
-        t.record_image_call("flux-2-pro", "1024x1792", purpose="preview")
-        t.record_image_call("flux-2-pro", "1024x1792", purpose="card")
+        t.record_image_call("flux-2-pro", "832x1280", purpose="preview")
+        t.record_image_call("flux-2-pro", "832x1280", purpose="preview")
+        t.record_image_call("flux-2-pro", "832x1280", purpose="card")
         assert t.image_calls == 3
         assert t.preview_image_calls == 2
 
     def test_cost_estimation(self):
         """Cost should reflect token counts and image counts."""
         t = UsageTracker()
-        t.text_model = "deepseek-v3.2"
+        t.text_model = "llama-3.3-70b"
         t.image_model = "flux-2-pro"
-        t.record_text_call("deepseek-v3.2", prompt_tokens=1000, completion_tokens=500)
-        t.record_image_call("flux-2-pro", "1024x1792")
-        t.record_image_call("flux-2-pro", "1024x1792")
+        t.record_text_call("llama-3.3-70b", prompt_tokens=1000, completion_tokens=500)
+        t.record_image_call("flux-2-pro", "832x1280")
+        t.record_image_call("flux-2-pro", "832x1280")
         costs = t.estimate_cost()
         assert costs["text"] > 0
         assert costs["image"] > 0
@@ -66,8 +66,8 @@ class TestUsageTracker:
     def test_to_dict_round_trip(self):
         """Serialized stats should reconstruct correctly."""
         t = UsageTracker()
-        t.record_text_call("deepseek-v3.2", prompt_tokens=500, completion_tokens=200)
-        t.record_image_call("flux-2-pro", "1024x1792")
+        t.record_text_call("llama-3.3-70b", prompt_tokens=500, completion_tokens=200)
+        t.record_image_call("flux-2-pro", "832x1280")
         t.record_style_call("oil painting style")
         t.finalize()
         data = t.to_dict()

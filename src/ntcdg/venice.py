@@ -165,7 +165,7 @@ def generate_image_with_venice(
     card: Card,
     api_key: str,
     model: str,
-    image_size: str = "1024x1536",
+    image_size: str = Config.DEFAULT_IMAGE_SIZE,
     negative_prompt: str = "",
     rate_limit_delay: float = 1.5,
     symbol_mode: str = "generate",
@@ -294,7 +294,7 @@ def edit_image_with_venice(
     edit_prompt: str,
     api_key: str,
     model: str = None,
-    image_size: str = "1024x1536",
+    image_size: str = Config.DEFAULT_IMAGE_SIZE,
     rate_limit_delay: float = 2.0,
 ) -> dict[str, Any]:
     """
@@ -319,22 +319,21 @@ def edit_image_with_venice(
                 "model": model,
                 "prompt": edit_prompt,
                 "image": f"data:image/png;base64,{image_b64}",
-                "size": image_size,
-                "response_format": "b64_json",
+                "width": _parse_image_size(image_size)[0],
+                "height": _parse_image_size(image_size)[1],
             },
             timeout=180,
         )
         resp.raise_for_status()
         data = resp.json()
 
-        if data.get("data"):
-            b64 = data["data"][0].get("b64_json")
-            if b64:
-                img_data = base64.b64decode(b64)
-                final_path = base_image_path.replace(".png", "_edited.png")
-                with open(final_path, "wb") as f:
-                    f.write(img_data)
-                return {"image_path": final_path, "image_model": model, "edited": True}
+        b64 = _extract_image_b64(data)
+        if b64:
+            img_data = base64.b64decode(b64)
+            final_path = base_image_path.replace(".png", "_edited.png")
+            with open(final_path, "wb") as f:
+                f.write(img_data)
+            return {"image_path": final_path, "image_model": model, "edited": True}
         return {"image_error": "Unexpected response from Venice Edit"}
 
     except Exception as e:
@@ -348,7 +347,7 @@ def generate_card_back(
     api_key: str,
     model: str,
     deck_name: str,
-    image_size: str = "1024x1536",
+    image_size: str = Config.DEFAULT_IMAGE_SIZE,
     negative_prompt: str = "",
     rate_limit_delay: float = 1.5,
 ) -> str:

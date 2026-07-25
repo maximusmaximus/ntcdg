@@ -7,8 +7,8 @@ File format (~/.ntcdgrc):
     venice_api_key: sk-xxx
     default_vibe: "cosmic horror meets art nouveau"
     default_image_model: flux-2-pro
-    default_text_model: deepseek-v3.2
-    default_image_size: 1024x1792
+    default_text_model: llama-3.3-70b
+    default_image_size: 832x1280
     default_font: /path/to/font.ttf
     default_negative_prompt: "text, ugly, blurry"
     rate_limit: 1.5
@@ -134,9 +134,9 @@ def create_sample_config():
 # default_deck_prompt: ""
 
 # Model preferences
-# default_text_model: deepseek-v3.2
+# default_text_model: llama-3.3-70b
 # default_image_model: flux-2-pro
-# default_image_size: 1024x1792
+# default_image_size: 832x1280
 
 # Font for card overlay
 # default_font: /path/to/font.ttf

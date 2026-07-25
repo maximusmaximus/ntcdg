@@ -26,6 +26,7 @@ except ImportError:
     FastMCP = None
 
 from .config import Config, setup_logging
+from .venice import _extract_text_content
 
 setup_logging()
 
@@ -136,7 +137,7 @@ def create_deck(
         deck_prompt: Additional theme instructions
         symbol_mode: "generate" (AI creates) or "provide" (user artwork)
         symbols_file: Path to symbols.json (when symbol_mode="provide")
-        image_size: Image dimensions (default: 1024x1792)
+        image_size: Image dimensions (default: 832x1280)
     """
     from .generator import generate_deck
 
@@ -686,12 +687,12 @@ def _describe_artwork(
                 "model": Config.DEFAULT_VISION_MODEL,
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.3,
-                "max_tokens": 400,
+                "max_tokens": 4000,
             },
-            timeout=60,
+            timeout=90,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
+        raw = _extract_text_content(resp.json())
 
         import json as json_mod
         import re
@@ -778,12 +779,12 @@ def describe_symbols(
                 "model": Config.DEFAULT_VISION_MODEL,
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.5,
-                "max_tokens": 600,
+                "max_tokens": 4000,
             },
-            timeout=60,
+            timeout=90,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
+        raw = _extract_text_content(resp.json())
 
         import json as json_mod
         import re
@@ -832,7 +833,7 @@ def estimate_cost(
         generate_images: Whether image generation will be used
         previews: Number of preview cards (0 to skip)
         image_model: Image model (default: flux-2-pro)
-        text_model: Text model (default: deepseek-v3.2)
+        text_model: Text model (default: llama-3.3-70b)
     """
     from .usage import PRICING
 
@@ -1200,12 +1201,12 @@ Return a JSON object with:
                     {"role": "user", "content": user_prompt},
                 ],
                 "temperature": 0.8,
-                "max_tokens": 600,
+                "max_tokens": 4000,
             },
-            timeout=60,
+            timeout=90,
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
+        raw = _extract_text_content(resp.json())
 
         import re
         match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
