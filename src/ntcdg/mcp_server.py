@@ -687,7 +687,6 @@ def _describe_artwork(
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.3,
                 "max_tokens": 400,
-                "response_format": {"type": "json_object"},
             },
             timeout=60,
         )
@@ -780,7 +779,6 @@ def describe_symbols(
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.5,
                 "max_tokens": 600,
-                "response_format": {"type": "json_object"},
             },
             timeout=60,
         )
@@ -1203,7 +1201,6 @@ Return a JSON object with:
                 ],
                 "temperature": 0.8,
                 "max_tokens": 600,
-                "response_format": {"type": "json_object"},
             },
             timeout=60,
         )

@@ -102,7 +102,6 @@ Return a JSON object with these fields:
             ],
             "temperature": 0.7,
             "max_tokens": 850,
-            "response_format": {"type": "json_object"},
         }
         resp = requests.post(
             Config.VENICE_TEXT_URL,
