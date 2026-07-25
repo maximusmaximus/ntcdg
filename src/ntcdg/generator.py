@@ -372,6 +372,7 @@ def generate_deck(
     symbol_mode: str = "generate",
     symbols_file: str = None,
     font_path: str = None,
+    resume: bool = False,
 ):
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
@@ -409,6 +410,19 @@ def generate_deck(
     )
 
     deck: list[Card] = []
+
+    # --- Resume: load existing deck and skip completed cards ---
+    existing_cards = {}
+    if resume:
+        from .storage import load_deck
+        existing = load_deck(name)
+        if existing:
+            existing_cards = {c.position: c for c in existing}
+            logger.info(
+                f"Resuming: found {len(existing)} existing cards, "
+                f"will skip completed ones"
+            )
+
     stats = {"venice_success": 0, "venice_fail": 0, "image_success": 0, "image_fail": 0}
 
     iterator = range(len(card_defs))
@@ -420,6 +434,23 @@ def generate_deck(
         card_def = card_defs[i]
         if HAS_TQDM:
             iterator.set_description(f"Card {position}/{num_cards} - {card_def['title'][:25]}")
+
+        # Resume: skip cards that already have results
+        if position in existing_cards:
+            existing_card = existing_cards[position]
+            has_analysis = existing_card.description and not existing_card.venice_error
+            has_image = existing_card.image_path and os.path.exists(
+                str(existing_card.image_path)
+            )
+            skip_analysis = (not analyze) or has_analysis
+            skip_image = (not generate_images) or has_image
+            if skip_analysis and skip_image:
+                deck.append(existing_card)
+                if has_analysis:
+                    stats["venice_success"] += 1
+                if has_image:
+                    stats["image_success"] += 1
+                continue
 
         card = generate_card(
             position, num_cards, card_def, deck_vibe, deck_prompt,

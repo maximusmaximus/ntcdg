@@ -708,6 +708,63 @@ def create_booklet_pdf(deck: list["Card"], deck_name: str) -> str:
     return pdf_path
 
 
+# ==================== EXPORT BUNDLE ====================
+def export_deck_bundle(deck_name: str) -> str:
+    """Create a zip bundle with all deck assets for distribution.
+
+    Bundle contents:
+    - All card PNG images
+    - Print PDF (if exists)
+    - Backs PDF (if exists)
+    - Booklet PDF (if exists)
+    - Spreadsheet (if exists)
+    - Deck JSON data
+    """
+    import glob
+    import zipfile
+
+    deck = load_deck(deck_name)
+    if not deck:
+        print(f"Deck '{deck_name}' not found.")
+        return ""
+
+    zip_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}_BUNDLE.zip")
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Card images
+        for card in deck:
+            if card.image_path and os.path.exists(str(card.image_path)):
+                arcname = f"images/{os.path.basename(card.image_path)}"
+                zf.write(card.image_path, arcname)
+
+        # Back image
+        from .storage import load_decks_index
+        meta = load_decks_index().get(deck_name, {})
+        back = meta.get("back_image", "")
+        if back and os.path.exists(back):
+            zf.write(back, f"images/{os.path.basename(back)}")
+
+        # PDFs and spreadsheet
+        patterns = [
+            f"{deck_name}_PRINT_*.pdf",
+            f"{deck_name}_BACKS_*.pdf",
+            f"{deck_name}_BOOKLET.pdf",
+            f"{deck_name}_MASTER.xlsx",
+        ]
+        for pattern in patterns:
+            for filepath in glob.glob(os.path.join(Config.OUTPUT_DIR, pattern)):
+                zf.write(filepath, os.path.basename(filepath))
+
+        # Deck JSON
+        json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
+        if os.path.exists(json_path):
+            zf.write(json_path, f"{deck_name}.json")
+
+    print(f"\nExport bundle created: {zip_path}")
+    logger.info(f"Bundle saved: {zip_path}")
+    return zip_path
+
+
 # ==================== FINALIZATION WORKFLOW ====================
 def finalize_deck(
     deck_name: str,

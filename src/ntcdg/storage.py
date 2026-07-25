@@ -146,3 +146,40 @@ def export_spreadsheet(deck: list[Card], deck_name: str) -> str:
     df.to_excel(path, index=False, sheet_name="Deck")
     logger.info(f"Spreadsheet saved: {path}")
     return path
+
+
+# ==================== CARD EDITING ====================
+def edit_card_field(
+    deck_name: str, card_position: int, field: str, value: str,
+) -> bool:
+    """Edit a single field of a card in a saved deck.
+
+    Valid fields: title, new_title, description,
+    upright_interpretation, reversed_interpretation.
+    Returns True on success.
+    """
+    valid_fields = {
+        "title", "new_title", "description",
+        "upright_interpretation", "reversed_interpretation",
+    }
+    if field not in valid_fields:
+        print(f"Invalid field '{field}'. Valid: {', '.join(sorted(valid_fields))}")
+        return False
+
+    deck = load_deck(deck_name)
+    if not deck:
+        print(f"Deck '{deck_name}' not found.")
+        return False
+
+    card = next((c for c in deck if c.position == card_position), None)
+    if not card:
+        print(f"Card {card_position} not found in deck '{deck_name}'.")
+        return False
+
+    old_value = getattr(card, field, "")
+    setattr(card, field, value)
+    save_deck(deck, deck_name)
+    print(f"Updated card {card_position} [{field}]:")
+    print(f"  Old: {(old_value or '(empty)')[:80]}")
+    print(f"  New: {value[:80]}")
+    return True

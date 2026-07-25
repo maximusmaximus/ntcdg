@@ -50,6 +50,10 @@ def main():
     parser.add_argument("--venice-key", type=str, default=None)
     parser.add_argument("--no-interactive", action="store_true")
     parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume a previous generation, skipping completed cards",
+    )
+    parser.add_argument(
         "--font", type=str, default=None,
         help="Path to a .ttf/.otf font file for card title and number overlay",
     )
@@ -60,6 +64,29 @@ def main():
     parser.add_argument(
         "--set-back", type=str, default=None,
         help="Generate/regenerate card back for an existing deck",
+    )
+
+    # Card editing
+    parser.add_argument(
+        "--edit-card", type=str, default=None,
+        help="Edit a card field in an existing deck (deck name)",
+    )
+    parser.add_argument(
+        "--card-num", type=int, default=None,
+        help="Card position number to edit",
+    )
+    parser.add_argument(
+        "--field", type=str, default=None,
+        help="Field to edit (title, description, upright/reversed)",
+    )
+    parser.add_argument(
+        "--value", type=str, default=None,
+        help="New value for the field",
+    )
+
+    parser.add_argument(
+        "--export", type=str, default=None,
+        help="Export a deck as a zip bundle with all assets",
     )
 
     # Finalization options
@@ -139,6 +166,14 @@ def main():
             print(f"Card back saved: {back_path}")
         else:
             print("Failed to generate card back.")
+    elif args.edit_card:
+        if not all([args.card_num, args.field, args.value]):
+            parser.error("--edit-card requires --card-num, --field, and --value")
+        from .storage import edit_card_field
+        edit_card_field(args.edit_card, args.card_num, args.field, args.value)
+    elif args.export:
+        from .finalize import export_deck_bundle
+        export_deck_bundle(args.export)
     elif args.finalize:
         finalize_deck(
             deck_name=args.finalize,
@@ -163,6 +198,7 @@ def main():
             symbol_mode=args.symbol_mode,
             symbols_file=args.symbols_file,
             font_path=args.font,
+            resume=args.resume,
         )
     else:
         parser.print_help()
