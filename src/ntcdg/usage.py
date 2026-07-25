@@ -45,6 +45,11 @@ class UsageTracker:
     style_calls: int = 0
     style_prompt: str = ""
 
+    # Symbols
+    symbol_mode: str = ""  # "generate" or "provide"
+    symbol_names: list[str] = field(default_factory=list)
+    symbols_file: str = ""
+
     # Preview
     preview_image_calls: int = 0
 
@@ -150,6 +155,9 @@ class UsageTracker:
             "preview_image_calls": self.preview_image_calls,
             "style_calls": self.style_calls,
             "style_prompt": self.style_prompt[:500],
+            "symbol_mode": self.symbol_mode,
+            "symbol_names": self.symbol_names[:20],
+            "symbols_file": self.symbols_file,
             "elapsed_seconds": round(self.elapsed_seconds, 1),
             "estimated_cost_usd": costs,
         }
@@ -170,6 +178,9 @@ class UsageTracker:
         tracker.preview_image_calls = data.get("preview_image_calls", 0)
         tracker.style_calls = data.get("style_calls", 0)
         tracker.style_prompt = data.get("style_prompt", "")
+        tracker.symbol_mode = data.get("symbol_mode", "")
+        tracker.symbol_names = data.get("symbol_names", [])
+        tracker.symbols_file = data.get("symbols_file", "")
         return tracker
 
 
@@ -221,6 +232,18 @@ def display_deck_stats(deck_name: str):
     print(f"  Image: {usage.get('image_model', 'N/A')}")
     print(f"  Size:  {usage.get('image_size', 'N/A')}")
 
+    # --- Symbols ---
+    sym_mode = usage.get("symbol_mode", "")
+    if sym_mode:
+        mode_label = "User-provided artwork" if sym_mode == "provide" else "AI-generated"
+        print("\nSymbols:")
+        print(f"  Mode:  {mode_label}")
+        sym_names = usage.get("symbol_names", [])
+        if sym_names:
+            print(f"  Names: {', '.join(sym_names)}")
+        sym_file = usage.get("symbols_file", "")
+        if sym_file:
+            print(f"  File:  {sym_file}")
     # --- Cost ---
     print("\nEstimated Cost (USD):")
     print(f"  Text inference:  ${costs.get('text', 0):.4f}")

@@ -547,6 +547,11 @@ def generate_deck(
         if missing:
             logger.warning(f"Symbol mode is 'provide' but missing images for: {missing}")
 
+    # Record symbol info in tracker
+    tracker.symbol_mode = symbol_mode
+    tracker.symbol_names = [s["name"] for s in symbols_config["symbols"]]
+    tracker.symbols_file = symbols_file or ""
+
     # Build symbol_images lookup {name -> path} — HOISTED out of loop
     symbol_images = {}
     for s in symbols_config["symbols"]:
