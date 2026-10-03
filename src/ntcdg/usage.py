@@ -4,6 +4,8 @@ Tracks all API calls made during deck generation and persists
 the stats in the deck index for later review.
 """
 
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,13 +16,19 @@ PRICING = {
     "text": {
         "deepseek-v3.2": {"input": 0.0014, "output": 0.0028},  # per 1K tokens
         "llama-3.3-70b": {"input": 0.0015, "output": 0.0030},
+        "qwen3-vl-235b-a22b": {"input": 0.0018, "output": 0.0035},
         "qwen2.5-vl": {"input": 0.0020, "output": 0.0040},
         "_default": {"input": 0.0015, "output": 0.0030},
     },
     "image": {
-        "flux-2-pro": 0.030,      # per image
-        "flux-2-max-edit": 0.040,  # per image
-        "_default": 0.035,
+        "qwen-image-3-pro": 0.030,   # SOTA default
+        "flux-2-pro": 0.030,         # per image
+        "flux-2-max": 0.035,
+        "flux-3-image": 0.040,
+        "gpt-image-2-5-flare": 0.035,
+        "recraft-v4-pro": 0.035,
+        "flux-2-max-edit": 0.040,    # legacy edit
+        "_default": 0.030,
     },
 }
 
@@ -164,7 +172,7 @@ class UsageTracker:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "UsageTracker":
+    def from_dict(cls, data: dict[str, Any]) -> UsageTracker:
         """Reconstruct from stored dict."""
         tracker = cls()
         tracker.text_calls = data.get("text_calls", 0)

@@ -1,5 +1,7 @@
 """Venice.ai API integration: text analysis, image generation, and image editing."""
 
+from __future__ import annotations
+
 import base64
 import contextlib
 import os
@@ -295,11 +297,15 @@ def edit_image_with_venice(
     api_key: str,
     model: str = None,
     image_size: str = Config.DEFAULT_IMAGE_SIZE,
+    enhance_prompt: bool = True,
     rate_limit_delay: float = 2.0,
 ) -> dict[str, Any]:
     """
     Use Venice's /image/edit endpoint to modify an existing image
     based on text instructions (great for injecting custom hand-drawn elements).
+
+    Supports SOTA models (qwen-image-3-pro, flux-2-max), vision-aware prompt enhancement,
+    and handles both raw binary image responses and JSON base64 payloads.
     """
     if not api_key or not requests:
         return {"image_error": "Missing API key or requests"}
@@ -312,28 +318,48 @@ def edit_image_with_venice(
         with open(base_image_path, "rb") as f:
             image_b64 = base64.b64encode(f.read()).decode("utf-8")
 
+        width, height = _parse_image_size(image_size)
+        payload = {
+            "model": model,
+            "prompt": edit_prompt,
+            "image": f"data:image/png;base64,{image_b64}",
+            "width": width,
+            "height": height,
+            "enhance_prompt": enhance_prompt,
+        }
+
         resp = requests.post(
             Config.VENICE_EDIT_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": model,
-                "prompt": edit_prompt,
-                "image": f"data:image/png;base64,{image_b64}",
-                "width": _parse_image_size(image_size)[0],
-                "height": _parse_image_size(image_size)[1],
-            },
+            json=payload,
             timeout=180,
         )
         resp.raise_for_status()
-        data = resp.json()
 
+        final_path = base_image_path.replace(".png", "_edited.png")
+
+        # Handle binary image response
+        content_type = resp.headers.get("content-type", "").lower()
+        raw = resp.content
+        if (
+            "image/" in content_type
+            or "octet-stream" in content_type
+            or raw.startswith(b"\x89PNG")
+            or raw.startswith(b"\xff\xd8\xff")
+        ):
+            with open(final_path, "wb") as f:
+                f.write(raw)
+            return {"image_path": final_path, "image_model": model, "edited": True}
+
+        # Handle JSON response
+        data = resp.json()
         b64 = _extract_image_b64(data)
         if b64:
             img_data = base64.b64decode(b64)
-            final_path = base_image_path.replace(".png", "_edited.png")
             with open(final_path, "wb") as f:
                 f.write(img_data)
             return {"image_path": final_path, "image_model": model, "edited": True}
+
         return {"image_error": "Unexpected response from Venice Edit"}
 
     except Exception as e:
