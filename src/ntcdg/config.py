@@ -59,14 +59,35 @@ class Config:
     # --- Model defaults (best-fit per task as of 2026) ---
     # Text: llama-3.3-70b — fast structured JSON, no reasoning overhead
     DEFAULT_TEXT_MODEL = "llama-3.3-70b"
-    # Image gen: flux-2-pro — best prompt adherence + detail for card art
-    DEFAULT_IMAGE_MODEL = "flux-2-pro"
-    # Image edit: flux-2-max-edit — high-quality inpainting/style transfer
-    DEFAULT_EDIT_MODEL = "flux-2-max-edit"
-    # Vision: llama-3.3-70b — text-only fallback since Venice multimodal endpoints are not available
-    DEFAULT_VISION_MODEL = "llama-3.3-70b"
-    # Image size: 832x1280 — portrait tarot ratio within Venice max (1280)
-    DEFAULT_IMAGE_SIZE = "832x1280"
+    # Image gen: qwen-image-3-pro — SOTA 2026 image model, high detail, prompt adherence
+    DEFAULT_IMAGE_MODEL = "qwen-image-3-pro"
+    # Image edit: qwen-image-3-pro — high-quality inpainting/style transfer via /image/edit
+    DEFAULT_EDIT_MODEL = "qwen-image-3-pro"
+    # Vision: qwen3-vl-235b-a22b — native multimodal vision model for artwork and symbol analysis
+    DEFAULT_VISION_MODEL = "qwen3-vl-235b-a22b"
+    # Image size: 768x1280 — exact 3:5 tarot bleed ratio (3.0" x 5.0") within Venice max (1280)
+    DEFAULT_IMAGE_SIZE = "768x1280"
+
+    # Supported model registries
+    SUPPORTED_IMAGE_MODELS = [
+        "qwen-image-3-pro",
+        "flux-2-max",
+        "flux-3-image",
+        "gpt-image-2-5-flare",
+        "recraft-v4-pro",
+        "ideogram-v4-5",
+        "seedream-v5-pro",
+        "flux-2-pro",
+    ]
+    SUPPORTED_EDIT_MODELS = [
+        "qwen-image-3-pro",
+        "flux-2-max",
+        "qwen-image-3",
+    ]
+    SUPPORTED_VISION_MODELS = [
+        "qwen3-vl-235b-a22b",
+        "z-ai-glm-5v-turbo",
+    ]
 
     VENICE_BASE_URL = "https://api.venice.ai/api/v1"
     VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"

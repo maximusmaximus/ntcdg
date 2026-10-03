@@ -60,7 +60,7 @@ def load_settings():
         "text_model": Config.DEFAULT_TEXT_MODEL,
         "image_model": Config.DEFAULT_IMAGE_MODEL,
         "edit_model": Config.DEFAULT_EDIT_MODEL,
-        "image_size": "832x1280",
+        "image_size": Config.DEFAULT_IMAGE_SIZE,
         "symbol_mode": "generate",
         "symbols_file": "",
         "font_path": "",
@@ -276,9 +276,9 @@ class RegenerateDialog(ModalScreen):
                 self.dismiss()
                 return
 
-            text_model = settings.get("text_model", "llama-3.1-405b")
-            image_model = settings.get("image_model", "venice-sd3")
-            image_size = settings.get("image_size", "832x1280")
+            text_model = settings.get("text_model", Config.DEFAULT_TEXT_MODEL)
+            image_model = settings.get("image_model", Config.DEFAULT_IMAGE_MODEL)
+            image_size = settings.get("image_size", Config.DEFAULT_IMAGE_SIZE)
             symbol_mode = settings.get("symbol_mode", "generate")
             symbols_file = settings.get("symbols_file", "")
 
@@ -402,11 +402,11 @@ class SettingsScreen(Screen):
         yield Label("Venice API Key (optional — can also use env var)")
         yield Input(value=settings.get("venice_api_key", ""), id="api_key", password=True)
         yield Label("Default Text Model")
-        yield Input(value=settings.get("text_model", "llama-3.1-405b"), id="text_model")
+        yield Input(value=settings.get("text_model", Config.DEFAULT_TEXT_MODEL), id="text_model")
         yield Label("Default Image Model")
-        yield Input(value=settings.get("image_model", "venice-sd3"), id="image_model")
+        yield Input(value=settings.get("image_model", Config.DEFAULT_IMAGE_MODEL), id="image_model")
         yield Label("Default Image Size")
-        yield Input(value=settings.get("image_size", "832x1280"), id="image_size")
+        yield Input(value=settings.get("image_size", Config.DEFAULT_IMAGE_SIZE), id="image_size")
         yield Label("Symbol Mode (generate or provide)")
         yield Input(value=settings.get("symbol_mode", "generate"), id="symbol_mode")
         yield Label("Symbols File (path to symbols.json, optional)")
