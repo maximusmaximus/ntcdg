@@ -117,22 +117,75 @@ batches (same name = replaced); pass `replace=True` to start over.
   (`failed_symbols`), and `finalize_deck` returns `success`, the exact output files
   and the validation errors/warnings.
 
+## Duplex Printing & QR Codes
+
+`ntcdg --finalize MyDeck` (or the MCP `finalize_deck` tool) writes, from **one
+shared slot plan**, so every back is printed directly behind its own front:
+
+| File | Use |
+|------|-----|
+| `MyDeck_DUPLEX_<sheet>_<color>_<flip>.pdf` | **Print this 2-sided** — pages alternate front, back, front, back |
+| `MyDeck_PRINT_<sheet>_<color>.pdf` | Fronts only (for print shops) |
+| `MyDeck_BACKS_<sheet>_<color>_<flip>.pdf` | Backs only, same registration |
+| `MyDeck_BOOKLET.pdf` | Card-sized companion booklet |
+
+- **Flip edge** — `--duplex-flip long_edge` (default; flip like a book page) mirrors
+  backs left↔right; `short_edge` (flip like a calendar) mirrors top↔bottom and rotates
+  the back art 180° so a cut card still reads upright when turned over.
+- **Registration never shifts** — a partial last sheet puts each back in the mirrored
+  cell, and a missing/corrupt image becomes a placeholder instead of moving later cards.
+- **Calibration** — `ntcdg --calibration-sheet --sheet-size letter --duplex-flip long_edge`
+  (MCP `duplex_calibration`) prints crosshairs on both sides. Hold it to a light, measure
+  any shift and pass it as `--back-offset-x-mm` / `--back-offset-y-mm` (±10 mm).
+- **Pairing check** — tiny `#12` slot labels sit in the waste area outside the trim on
+  both sides. Nothing that identifies a card is printed inside the trim on the back, so
+  backs stay indistinguishable for readings.
+- **No back art?** A symmetric default back is generated.
+
+### Per-card QR codes
+
+Each back carries a QR code that opens that card's public page (image + meaning).
+Configure the public site once:
+
+```bash
+export NTCDG_PUBLIC_BASE_URL="https://tarot.example.com"   # path mode
+# -> https://tarot.example.com/c/<deck-slug>/<card-slug>
+
+export NTCDG_PUBLIC_BASE_URL="https://{deck}.example.com"  # one subdomain per deck
+# -> https://<deck-slug>.example.com/c/<card-slug>
+
+# or compose it:
+export NTCDG_PUBLIC_ROOT_DOMAIN=example.com NTCDG_PUBLIC_SUBDOMAIN=tarot  # NTCDG_PUBLIC_SCHEME=https
+```
+
+- Deck slugs look like `moon-garden-k7m2qx` (random suffix, DNS-safe); card slugs like
+  `01-the-fool` (position + canonical title, so renaming a card never breaks a printed code).
+- The base URL is **baked into the deck on first finalize**; reprints always produce the
+  same codes. Changing it needs `--rebase-url` / `rebase_url=True` (old cards keep the old URL).
+- Localhost, private IPs, credentials, queries and fragments are refused — printed codes live forever.
+- No URL configured → the deck still prints (no QR) and the report explains why. `--no-qr` disables them.
+- `ntcdg --public-links MyDeck` / MCP `get_public_links` lists every card's URL;
+  MCP `get_card_by_slug` resolves a scanned code (published decks only) with prev/next slugs.
+
 ## Project Structure
 
 ```
 ntcdg/
 ├── src/ntcdg/
-│   ├── __init__.py       # Package init (v0.2.0)
 │   ├── models.py         # Card dataclass
 │   ├── config.py         # Config, dependencies, retry logic
-│   ├── storage.py        # Deck load/save, index, spreadsheet
-│   ├── symbols.py        # Symbol config + cohesive generation
+│   ├── runtime.py        # Per-call Venice key scope + stdout capture
+│   ├── storage.py        # Deck load/save, locked atomic index, spreadsheet
+│   ├── symbols.py        # Traditional symbol registry, artist symbols, completion
 │   ├── venice.py         # Venice API (text/image/edit)
-│   ├── generator.py      # Deck generation, proof sheets, review
+│   ├── generator.py      # Deck generation, checkpoints, proof sheets, review
+│   ├── finalize.py       # Validation, print geometry, booklet, finalize report
+│   ├── duplex.py         # Duplex slot plan, registered backs, QR, calibration
+│   ├── public.py         # Public slugs, base-URL config, card URLs
+│   ├── mcp_server.py     # MCP tools
 │   ├── cli.py            # CLI entry point
 │   └── tui.py            # Textual TUI
-├── tests/
-│   └── test_models.py    # Card model + canonical deck tests
+├── tests/                # pytest suite (duplex, public URLs, workflow edge cases, ...)
 ├── symbols.json          # Example symbol definitions
 └── pyproject.toml        # Package config + console scripts
 ```

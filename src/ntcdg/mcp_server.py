@@ -389,16 +389,31 @@ def finalize_deck(
     sheet_size: str = "letter",
     color_mode: str = "color",
     duplex_flip: str = "long_edge",
+    qr_codes: bool = True,
+    public_base_url: str = "",
+    rebase_url: bool = False,
+    back_offset_x_mm: float = 0.0,
+    back_offset_y_mm: float = 0.0,
 ) -> dict[str, Any]:
-    """Generate print-ready PDFs for a deck (fronts, backs, booklet).
+    """Generate print-ready, duplex-registered PDFs (fronts, per-card QR backs, booklet).
+
+    Produces an interleaved DUPLEX PDF (print 2-sided) plus separate fronts and
+    backs files, all from one slot plan so every back lines up with its front.
+    Each back carries a QR code linking to that card's public page.
 
     Args:
         deck_name: Name of the deck to finalize
         sheet_size: "letter" (8.5x11), "tabloid" (11x17), "a4", or "a3"
         color_mode: "color" or "bw" (both output as CMYK)
-        duplex_flip: "long_edge" (standard duplex alignment) or "short_edge"
+        duplex_flip: "long_edge" (flip like a book; default) or "short_edge"
+        qr_codes: Put a per-card QR code on each back (needs a public base URL)
+        public_base_url: e.g. "https://tarot.example.com" (default: NTCDG_PUBLIC_BASE_URL).
+            Baked into the deck on first finalize so reprints keep the same codes.
+        rebase_url: Allow changing a deck's already-baked public URL
+        back_offset_x_mm: Printer drift correction for backs (+ = right), from the calibration sheet
+        back_offset_y_mm: Printer drift correction for backs (+ = up)
 
-    Returns success, the exact output files, and validation errors/warnings.
+    Returns success, the exact output files, QR/public URL info and validation errors/warnings.
     """
     from .finalize import finalize_deck_report
 
@@ -409,22 +424,117 @@ def finalize_deck(
             sheet_size=sheet_size,
             color_mode=color_mode,
             duplex_flip=duplex_flip,
+            qr_codes=qr_codes,
+            public_base_url=public_base_url or None,
+            rebase_url=rebase_url,
+            back_offset_mm=(back_offset_x_mm, back_offset_y_mm),
         )
     except ValueError as e:
         return {"success": False, "deck_name": deck_name, "error": str(e)}
 
-    pdfs = [p for p in (report["print_pdf"], report["backs_pdf"]) if p]
+    pdfs = [p for p in (report["duplex_pdf"], report["print_pdf"], report["backs_pdf"]) if p]
     return {
         "success": report["success"],
         "deck_name": deck_name,
         "error": report["error"] or None,
         "pdfs": pdfs,
+        "duplex_pdf": report["duplex_pdf"] or None,
         "print_pdf": report["print_pdf"] or None,
         "backs_pdf": report["backs_pdf"] or None,
         "booklet": report["booklet_pdf"] or None,
         "pages": report["pages"],
+        "qr": report["qr"],
+        "warnings": report["warnings"],
         "validation": report["validation"],
         "output": output,
+    }
+
+
+@mcp.tool()
+def duplex_calibration(
+    sheet_size: str = "letter",
+    duplex_flip: str = "long_edge",
+    back_offset_x_mm: float = 0.0,
+    back_offset_y_mm: float = 0.0,
+) -> dict[str, Any]:
+    """Create a 2-page duplex calibration sheet to check front/back registration.
+
+    Print it 2-sided with the same printer settings as the deck and hold it to a
+    light. If the back crosshairs are shifted, measure the shift in mm and pass
+    it to finalize_deck as back_offset_x_mm / back_offset_y_mm.
+    """
+    from .duplex import create_calibration_pdf
+
+    try:
+        path = create_calibration_pdf(
+            sheet_size, duplex_flip, (back_offset_x_mm, back_offset_y_mm),
+        )
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if not path:
+        return {"success": False, "error": "reportlab is required"}
+    return {
+        "success": True,
+        "calibration_pdf": path,
+        "instructions": (
+            f"Print 2-sided, flip on {duplex_flip.replace('_', ' ')}, at 100% scale. "
+            "Hold to a light: crosshairs on both sides should coincide. "
+            "Measure any shift in mm (+x = backs need to move right, +y = up, "
+            "as seen on the back) and pass it to finalize_deck."
+        ),
+    }
+
+
+@mcp.tool()
+def get_public_links(deck_name: str) -> dict[str, Any]:
+    """Get the public deck URL and every card's QR/page URL for a finalized deck."""
+    from .public import public_links
+    from .storage import deck_exists
+
+    if not deck_exists(deck_name):
+        return {"enabled": False, "error": f"Deck '{deck_name}' not found"}
+    return public_links(deck_name)
+
+
+@mcp.tool()
+def get_card_by_slug(deck_slug: str, card_slug: str) -> dict[str, Any]:
+    """Resolve a scanned QR code (deck slug + card slug) to the card's full details.
+
+    Only published (finalized with a public URL) decks resolve. Also returns
+    the previous/next card slugs so a viewer can swipe through the deck.
+    """
+    from .public import card_slug as make_card_slug
+    from .public import find_deck_by_slug, parse_card_position
+    from .storage import load_deck
+
+    found = find_deck_by_slug(deck_slug)
+    position = parse_card_position(card_slug)
+    if not found or not found[1].get("published") or position is None:
+        return {"error": "Card not found"}
+    deck_name, _meta = found
+    cards = sorted(load_deck(deck_name), key=lambda c: c.position or 0)
+    idx = next((i for i, c in enumerate(cards) if c.position == position), None)
+    if idx is None:
+        return {"error": "Card not found"}
+    card = cards[idx]
+    prev_card = cards[idx - 1] if cards else None
+    next_card = cards[(idx + 1) % len(cards)]
+    return {
+        "deck_slug": deck_slug,
+        "card_slug": make_card_slug(card),
+        "position": card.position,
+        "total": len(cards),
+        "title": card.display_title(),
+        "original_title": card.title,
+        "card_type": card.card_type or "",
+        "suit": card.suit,
+        "symbols": card.symbols,
+        "description": card.description or "",
+        "upright_interpretation": card.upright_interpretation or "",
+        "reversed_interpretation": card.reversed_interpretation or "",
+        "has_image": bool(card.image_path and os.path.exists(str(card.image_path))),
+        "prev_card_slug": make_card_slug(prev_card) if prev_card else None,
+        "next_card_slug": make_card_slug(next_card),
     }
 
 

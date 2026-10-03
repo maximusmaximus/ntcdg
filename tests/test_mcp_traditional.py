@@ -187,7 +187,8 @@ class TestMCPTraditionalTools:
             )
             assert result["success"] is True, result
             assert result["print_pdf"].endswith("FinalizeTestDeck_PRINT_a4_color.pdf")
-            assert result["backs_pdf"].endswith("FinalizeTestDeck_BACKS_a4_color.pdf")
+            assert result["backs_pdf"].endswith(f"FinalizeTestDeck_BACKS_a4_color_{flip}.pdf")
+            assert result["duplex_pdf"].endswith(f"FinalizeTestDeck_DUPLEX_a4_color_{flip}.pdf")
             assert result["validation"]["errors"] == []
             assert result["pages"] == 1
 

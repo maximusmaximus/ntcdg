@@ -82,14 +82,28 @@ Valid fields: `title`, `new_title`, `description`, `upright_interpretation`, `re
 
 ### Finalize for Print
 ```bash
-# Generate print-ready PDFs (fronts + backs + booklet)
+# Duplex-registered PDFs: DUPLEX (print 2-sided) + fronts + backs + booklet
 ntcdg --finalize DeckName \
   --sheet-size letter \
-  --color-mode color
+  --color-mode color \
+  --duplex-flip long_edge \
+  --public-base-url https://tarot.example.com   # or set NTCDG_PUBLIC_BASE_URL
 ```
 
-Sheet sizes: `letter` (8.5×11) or `tabloid` (11×17)
-Color modes: `color` or `bw` (both output CMYK)
+Sheet sizes: `letter`, `tabloid`, `a4`, `a3`. Color modes: `color` or `bw` (both CMYK).
+Duplex flip: `long_edge` (default) or `short_edge` — must match the printer setting.
+
+- Every back gets a QR code for that card's public page. The base URL is baked into the
+  deck on first finalize; `--rebase-url` is required to change it. `--no-qr` skips codes.
+  Without a configured URL the deck still prints, with a warning and no QR codes.
+- Registration drift: `ntcdg --calibration-sheet --sheet-size letter --duplex-flip long_edge`,
+  print 2-sided, measure, then pass `--back-offset-x-mm/--back-offset-y-mm` (±10 mm).
+- `ntcdg --public-links DeckName` lists every card's public URL.
+
+MCP equivalents: `finalize_deck(deck_name, sheet_size, color_mode, duplex_flip, qr_codes,
+public_base_url, rebase_url, back_offset_x_mm, back_offset_y_mm)` (returns `duplex_pdf`,
+`print_pdf`, `backs_pdf`, `qr`, `warnings`, `validation`), `duplex_calibration`,
+`get_public_links(deck_name)`, `get_card_by_slug(deck_slug, card_slug)`.
 
 ### Export Bundle
 ```bash
@@ -142,7 +156,9 @@ aesthetic from the symbol images.
 | Preview images | `generated_decks/images/previews/*.png` |
 | Deck JSON | `generated_decks/DeckName.json` |
 | Print PDFs | `generated_decks/DeckName_PRINT_*.pdf` |
-| Backs PDF | `generated_decks/DeckName_BACKS_*.pdf` |
+| Duplex PDF | `generated_decks/DeckName_DUPLEX_<sheet>_<color>_<flip>.pdf` |
+| Backs PDF | `generated_decks/DeckName_BACKS_<sheet>_<color>_<flip>.pdf` |
+| Calibration | `generated_decks/CALIBRATION_<sheet>_<flip>.pdf` |
 | Booklet PDF | `generated_decks/DeckName_BOOKLET.pdf` |
 | Spreadsheet | `generated_decks/DeckName_MASTER.xlsx` |
 | Export bundle | `generated_decks/DeckName_BUNDLE.zip` |
