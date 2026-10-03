@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}My decks — NTCDG{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ user.display_name or user.username }}'s decks</h1>
+  <a class="btn" href="/decks/new">+ New deck</a>
+</div>
+{% if not has_key %}
+  <div class="flash warn">To generate art and meanings, <a href="/profile#venice-key">add your Venice API key</a>. It is stored encrypted and used only for your own decks.</div>
+{% endif %}
+
+{% if decks %}
+<ul class="deck-grid">
+  {% for d in decks %}
+  <li class="deck-tile">
+    <a href="/decks/{{ d.name }}">
+      {% if d.cover %}<img src="{{ d.cover }}" alt="" loading="lazy">{% else %}<div class="cover-placeholder" aria-hidden="true">✦</div>{% endif %}
+      <h3>{{ d.name }}</h3>
+    </a>
+    <p class="muted">{{ d.images }}/{{ d.cards }} cards illustrated{% if d.published %} · <span class="badge ok">published</span>{% endif %}</p>
+    {% if d.vibe %}<p class="vibe">{{ d.vibe }}</p>{% endif %}
+    <p class="muted small">Updated {{ d.last_modified }}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<section class="card-panel center">
+  <h2>No decks yet</h2>
+  <p>Your first deck is a few steps away.</p>
+  <a class="btn" href="/decks/new">Create a deck</a>
+</section>
+{% endif %}
+
+<h2>Recent jobs</h2>
+{% include "_jobs_table.html" %}
+<p><a href="/jobs">All jobs →</a></p>
+{% endblock %}

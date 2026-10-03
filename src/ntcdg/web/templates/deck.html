@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tool_form %}
+{% set dk = {"deck_name": deck} %}
+{% block title %}{{ deck }} — NTCDG{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/dashboard">My decks</a> › <span>{{ deck }}</span></nav>
+<div class="deck-head">
+  <div>
+    <h1>{{ deck }}</h1>
+    {% if summary.vibe %}<p class="lead">{{ summary.vibe }}</p>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="btn" href="/decks/{{ deck }}/print">Print &amp; share</a>
+    {% if links.enabled %}<a class="btn ghost" href="{{ links.deck_url }}" rel="noopener" target="_blank">Public page ↗</a>{% endif %}
+  </div>
+</div>
+
+{% if busy %}
+<div class="flash warn" data-busy>A job is working on this deck right now: <strong>{{ busy.tool }}</strong>
+  ({{ busy.status }}). <a href="/jobs/{{ busy.id }}/view">Watch it live</a>. Editing is paused until it finishes.</div>
+{% endif %}
+
+<section class="stats">
+  <div class="stat"><span class="n">{{ summary.total_cards }}</span><span>cards</span></div>
+  <div class="stat"><span class="n">{{ summary.images }}</span><span>images</span></div>
+  <div class="stat"><span class="n">{{ summary.meanings }}</span><span>meanings</span></div>
+  <div class="stat{% if summary.errors %} bad{% endif %}"><span class="n">{{ summary.errors }}</span><span>errors</span></div>
+  <div class="stat"><span class="n">{{ "yes" if summary.has_back else "no" }}</span><span>card back</span></div>
+  <div class="stat"><span class="n">{{ "yes" if links.enabled else "no" }}</span><span>published</span></div>
+</section>
+
+{% if summary.errors %}
+<div class="card-panel">
+  <h2>Some cards need another try</h2>
+  <p>{{ summary.errors }} card(s) failed (often a temporary Venice hiccup). Retry just those cards:</p>
+  {{ tool_form(TOOLS["retry_failed"], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], label="Retry failed cards", compact=True) }}
+</div>
+{% endif %}
+
+<h2>Cards</h2>
+{% if cards %}
+<ul class="card-grid">
+  {% for c in cards %}
+  <li>
+    <a href="/decks/{{ deck }}/cards/{{ c.position }}" class="card-tile{% if c.error %} has-error{% endif %}">
+      {% if c.image_url %}<img src="{{ c.image_url }}" alt="{{ c.title }}" loading="lazy">
+      {% else %}<span class="noimg">no image</span>{% endif %}
+      <span class="t"><span class="pos">{{ c.position }}</span> {{ c.title }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No cards yet.</p>
+{% endif %}
+
+<section class="card-panel">
+  <h2>Card back</h2>
+  <div class="split">
+    <div>{% if back_url %}<img class="back-preview" src="{{ back_url }}" alt="Card back">{% else %}<p class="muted">No back yet — finalize will use a QR-only back, or generate one:</p>{% endif %}</div>
+    <div>{{ tool_form(TOOLS["generate_back"], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], label="Generate card back") }}</div>
+  </div>
+</section>
+
+<section class="card-panel">
+  <h2>More tools for this deck</h2>
+  {% for name in ["deck_progress", "deck_stats", "get_deck_traditional_coverage", "list_cards", "get_all_images", "export_bundle"] %}
+  <details class="sub"><summary><code>{{ name }}</code> <span class="muted">— {{ TOOLS[name].summary }}</span></summary>
+    {{ tool_form(TOOLS[name], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], compact=True) }}
+  </details>
+  {% endfor %}
+  <details class="sub"><summary><code>clone_deck</code> <span class="muted">— {{ TOOLS["clone_deck"].summary }}</span></summary>
+    {{ tool_form(TOOLS["clone_deck"], decks, uploads, json_uploads, manifests, preset={"source": deck}, hide=["source"], compact=True) }}
+  </details>
+</section>
+
+<section class="card-panel danger">
+  <h2>Delete this deck</h2>
+  <p>This permanently removes the cards, images, PDFs and the public pages (QR codes on printed cards will stop working).</p>
+  <form method="post" action="/decks/{{ deck }}/delete" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Type <code>{{ deck }}</code> to confirm <input name="confirm" autocomplete="off" required></label>
+    <button class="btn danger" type="submit">Delete deck</button>
+  </form>
+</section>
+{% endblock %}

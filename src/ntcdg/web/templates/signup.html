@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Create your profile — NTCDG{% endblock %}
+{% block content %}
+<section class="narrow card-panel">
+  <h1>Create your profile</h1>
+  <p class="muted">Your profile holds your decks, your uploads and (optionally) your own Venice API key.</p>
+  {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/signup" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Username
+      <input name="username" required minlength="3" maxlength="32" autocomplete="username"
+             pattern="[a-z0-9][a-z0-9_\-]{1,30}[a-z0-9]" value="{{ form.username or '' }}">
+      <small>3–32 characters: lowercase letters, numbers, “-” and single “_”.</small>
+    </label>
+    <label>Display name <span class="muted">(optional)</span>
+      <input name="display_name" maxlength="80" value="{{ form.display_name or '' }}">
+    </label>
+    <label>Password
+      <input name="password" type="password" required minlength="8" maxlength="256" autocomplete="new-password">
+    </label>
+    <label>Repeat password
+      <input name="password2" type="password" required minlength="8" maxlength="256" autocomplete="new-password">
+    </label>
+    <button class="btn" type="submit">Create profile</button>
+  </form>
+  <p class="muted">Already have one? <a href="/login">Log in</a>.</p>
+</section>
+{% endblock %}

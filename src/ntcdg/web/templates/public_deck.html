@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ deck_title }} — a tarot deck made to be given away{% endblock %}
+{% block description %}{{ philosophy }}{% endblock %}
+{% block meta %}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ deck_title }}">
+  <meta property="og:description" content="{{ philosophy }}">
+  <meta name="robots" content="noindex">
+{% endblock %}
+{% block body_class %}public{% endblock %}
+{% block header %}
+<header class="public-header">
+  <span class="deck-link"><img src="/static/logo.svg" alt="" width="22" height="22"> <span>{{ deck_title }}</span></span>
+  <span class="counter">{{ cards | length }} cards</span>
+</header>
+{% endblock %}
+{% block main_class %}viewer-main{% endblock %}
+{% block content %}
+<section class="public-deck">
+  <h1>{{ deck_title }}</h1>
+  <p class="philosophy">Each card in this deck was made to be given away. If one found its way to you, its energy is
+    yours alone. Tap a card — or scan the code on its back — to read what it holds.</p>
+  {% include "_scanner.html" %}
+  <ul class="card-grid public">
+    {% for c in cards %}
+    <li>
+      <a class="card-tile" href="{{ c.href }}">
+        {% if c.thumb_url %}<img src="{{ c.thumb_url }}" alt="" loading="lazy">{% else %}<span class="noimg">✶</span>{% endif %}
+        <span class="t"><span class="pos">{{ c.position }}</span> {{ c.title }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}
+{% block footer %}
+<footer class="site-footer public">
+  <p>Made with <a href="/about">NTCDG</a> — tarot decks made to be given away.</p>
+</footer>
+{% endblock %}
+{% block scripts %}<script src="/static/scanner.js" defer></script>{% endblock %}

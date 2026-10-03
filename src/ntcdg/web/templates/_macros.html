@@ -1,0 +1,79 @@
+{# Shared macros: auto-generated tool forms and the input/output panel. #}
+
+{% macro field(p, decks=[], uploads=[], json_uploads=[], manifests=[], preset={}, hide=[]) -%}
+  {%- set val = preset[p.name] if p.name in preset else p.default -%}
+  {%- set fid = "f-" ~ (range(100000, 999999) | random) ~ "-" ~ p.name -%}
+  {%- if p.name in hide -%}
+    {%- if p.kind == "bool" -%}
+      <input type="hidden" name="{{ p.name }}" data-kind="bool" value="{{ 'true' if val else 'false' }}">
+    {%- else -%}
+      <input type="hidden" name="{{ p.name }}" data-kind="{{ p.kind }}" value="{{ val if val is not none else '' }}">
+    {%- endif -%}
+  {%- else -%}
+  <div class="field kind-{{ p.kind }}">
+    {%- if p.kind == "bool" -%}
+      <label class="check"><input type="checkbox" name="{{ p.name }}" data-kind="bool" {% if val %}checked{% endif %}>
+        <span class="pname">{{ p.name }}</span></label>
+    {%- else -%}
+      <label for="{{ fid }}"><span class="pname">{{ p.name }}</span>{% if p.required %} <span class="req" title="required">*</span>{% endif %}
+        <span class="ptype">{{ p.annotation }}</span></label>
+      {%- if p.kind == "deck" -%}
+        <select id="{{ fid }}" name="{{ p.name }}" data-kind="deck" {% if p.required %}required{% endif %}>
+          {% if not decks %}<option value="">(no decks yet)</option>{% endif %}
+          {% for d in decks %}<option value="{{ d }}" {% if d == val %}selected{% endif %}>{{ d }}</option>{% endfor %}
+        </select>
+      {%- elif p.kind in ("new_deck", "label_deck") -%}
+        <input id="{{ fid }}" name="{{ p.name }}" data-kind="{{ p.kind }}" maxlength="60"
+               pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,59}" value="{{ val or '' }}" {% if p.required %}required{% endif %}
+               list="decklist" data-sync="deckname">
+      {%- elif p.kind in ("int", "float") -%}
+        <input id="{{ fid }}" type="number" name="{{ p.name }}" data-kind="{{ p.kind }}"
+               value="{{ val if val is not none else '' }}"
+               {% if p.minimum is not none %}min="{{ p.minimum }}"{% endif %}
+               {% if p.maximum is not none %}max="{{ p.maximum }}"{% endif %}
+               step="{{ '1' if p.kind == 'int' else 'any' }}" {% if p.required %}required{% endif %}>
+      {%- elif p.kind == "choice" -%}
+        <select id="{{ fid }}" name="{{ p.name }}" data-kind="choice">
+          {% for c in p.choices %}<option value="{{ c }}" {% if c == val %}selected{% endif %}>{{ c or "(default)" }}</option>{% endfor %}
+        </select>
+      {%- elif p.kind == "text" -%}
+        <textarea id="{{ fid }}" name="{{ p.name }}" data-kind="text" rows="3" maxlength="8000">{{ val or '' }}</textarea>
+      {%- elif p.kind == "symbols_file" -%}
+        <select id="{{ fid }}" name="{{ p.name }}" data-kind="symbols_file" data-symbols-select>
+          <option value="">(none — default symbols)</option>
+          {% for m in manifests %}<option value="{{ m.ref }}" {% if m.ref == val %}selected{% endif %}>Registered symbols: {{ m.deck }}</option>{% endfor %}
+          {% for u in json_uploads %}<option value="upload:{{ u.id }}">Uploaded file: {{ u.original_name }}</option>{% endfor %}
+        </select>
+      {%- elif p.kind == "upload_images" -%}
+        <select id="{{ fid }}" name="{{ p.name }}" data-kind="upload_images" multiple size="5" data-upload-select>
+          {% for u in uploads %}<option value="upload:{{ u.id }}">{{ u.original_name }} ({{ u.id }})</option>{% endfor %}
+        </select>
+        <small>Upload images below, then select them here (Ctrl/Cmd-click for several).</small>
+      {%- elif p.kind in ("symbol_defs", "json_list") -%}
+        <textarea id="{{ fid }}" name="{{ p.name }}" data-kind="json" rows="5" class="mono"
+                  placeholder='[{"name": "Serpent"{% if p.kind == "symbol_defs" %}, "image_path": "upload:…"{% endif %}, "description": "…"}]'>{{ (val | tojson) if val else '' }}</textarea>
+        {%- if p.kind == "symbol_defs" -%}
+          <button type="button" class="btn small ghost" data-fill-symbols>Fill from my uploaded images</button>
+        {%- endif -%}
+      {%- elif p.kind == "confirm" -%}
+        <input id="{{ fid }}" name="{{ p.name }}" data-kind="confirm" autocomplete="off" required>
+      {%- else -%}
+        <input id="{{ fid }}" name="{{ p.name }}" data-kind="str" value="{{ val if val is not none else '' }}" maxlength="8000">
+      {%- endif -%}
+    {%- endif -%}
+    {%- if p.description %}<small class="pdesc">{{ p.description }}</small>{% endif -%}
+  </div>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro tool_form(spec, decks=[], uploads=[], json_uploads=[], manifests=[], preset={}, hide=[], label=None, compact=False) -%}
+<form class="tool-form{% if compact %} compact{% endif %}" data-tool="{{ spec.name }}" data-mode="{{ spec.mode }}">
+  {% for p in spec.visible_params %}{{ field(p, decks, uploads, json_uploads, manifests, preset, hide) }}{% endfor %}
+  <div class="form-actions">
+    <button class="btn" type="submit">{{ label or ("Start job: " ~ spec.name if spec.mode == "job" else "Run " ~ spec.name) }}</button>
+    {% if spec.needs_key %}<span class="badge key" title="Uses your Venice API key">uses Venice</span>{% endif %}
+    {% if spec.mode == "job" %}<span class="badge">background job</span>{% endif %}
+  </div>
+  <div class="tool-result" aria-live="polite"></div>
+</form>
+{%- endmacro %}

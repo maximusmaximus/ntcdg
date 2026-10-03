@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Profile — NTCDG{% endblock %}
+{% block content %}
+<h1>Your profile</h1>
+<div class="grid two">
+  <section class="card-panel">
+    <h2>About you</h2>
+    <form method="post" action="/profile" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Username <input value="{{ user.username }}" disabled></label>
+      <label>Display name <input name="display_name" maxlength="80" value="{{ user.display_name }}"></label>
+      <label>Bio <textarea name="bio" rows="4" maxlength="2000">{{ user.bio }}</textarea></label>
+      <button class="btn" type="submit">Save profile</button>
+    </form>
+  </section>
+
+  <section class="card-panel" id="venice-key">
+    <h2>Venice API key</h2>
+    <p class="muted">Generation uses <strong>your own</strong> <a href="https://venice.ai" rel="noopener">Venice.ai</a> key.
+      It is stored encrypted and never shown again — only its last four characters.
+      Without a key you can still browse symbols, estimate costs and print existing decks.</p>
+    {% if key_state == "ok" %}
+      <p class="keystate ok">Key on file: <code>••••••••{{ key_last4 }}</code></p>
+    {% elif key_state == "undecryptable" %}
+      <p class="keystate warn">A key is on file but can no longer be decrypted (the server secret changed). Please enter it again.</p>
+    {% else %}
+      <p class="keystate">No key on file.</p>
+    {% endif %}
+    <form method="post" action="/profile/key" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>{% if key_state == "none" %}Add{% else %}Replace{% endif %} key
+        <input name="venice_key" type="password" autocomplete="off" required minlength="8" maxlength="512"
+               placeholder="paste your Venice API key">
+      </label>
+      <button class="btn" type="submit">Save key</button>
+    </form>
+    {% if key_state != "none" %}
+    <form method="post" action="/profile/key/delete" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn ghost danger" type="submit">Remove key</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card-panel">
+    <h2>Change password</h2>
+    <form method="post" action="/profile/password" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Current password <input name="current_password" type="password" required autocomplete="current-password"></label>
+      <label>New password <input name="new_password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Repeat new password <input name="new_password2" type="password" required minlength="8" autocomplete="new-password"></label>
+      <button class="btn" type="submit">Change password</button>
+    </form>
+  </section>
+
+  <section class="card-panel danger-zone">
+    <h2>Delete account</h2>
+    <p>This permanently deletes your profile, <strong>all of your decks</strong>, uploads and job history.
+      Cards you have already given away will stop opening their pages.</p>
+    <form method="post" action="/profile/delete" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Type your username (<code>{{ user.username }}</code>) <input name="confirm_username" required autocomplete="off"></label>
+      <label>Current password <input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn danger" type="submit">Delete my account and decks</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

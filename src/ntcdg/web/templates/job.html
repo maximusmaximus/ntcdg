@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.tool }} — NTCDG{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Job: <code>{{ job.tool }}</code>{% if job.deck %} · <a href="/decks/{{ job.deck }}">{{ job.deck }}</a>{% endif %}</h1>
+</div>
+<p class="muted">Created {{ (job.created_at or "")[:19].replace("T", " ") }}</p>
+<div class="job-host" data-job-id="{{ job.id }}" data-tool="{{ job.tool }}" data-deck="{{ job.deck }}"></div>
+<details class="io" open>
+  <summary>Input JSON</summary>
+  <pre class="json">{{ job.input | tojson(indent=2) }}</pre>
+</details>
+{% endblock %}

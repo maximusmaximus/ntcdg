@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tool_form %}
+{% set ck = {"deck_name": deck, "card_num": card.position} %}
+{% block title %}{{ card.title }} · {{ deck }} — NTCDG{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/dashboard">My decks</a> › <a href="/decks/{{ deck }}">{{ deck }}</a> › <span>Card {{ card.position }}</span></nav>
+
+<div class="card-edit">
+  <div class="card-edit-art">
+    {% if card.image_url %}<img class="card-art" src="{{ card.image_url }}" alt="{{ card.title }}">
+    {% else %}<div class="card-art placeholder">No image yet</div>{% endif %}
+    <div class="pager">
+      {% if prev_pos is not none %}<a class="btn ghost small" href="/decks/{{ deck }}/cards/{{ prev_pos }}" rel="prev">← Previous</a>{% endif %}
+      {% if next_pos is not none %}<a class="btn ghost small" href="/decks/{{ deck }}/cards/{{ next_pos }}" rel="next">Next →</a>{% endif %}
+    </div>
+    {% if public_url %}
+      <p class="public-link">Public page: <a href="{{ public_url }}" target="_blank" rel="noopener">{{ public_url }}</a></p>
+      <img class="qr" src="/decks/{{ deck }}/qr/{{ card.position }}.svg" alt="QR code for this card's public page" width="140" height="140">
+    {% else %}
+      <p class="muted">Finalize the deck on the <a href="/decks/{{ deck }}/print">print page</a> to give this card a public page and QR code.</p>
+    {% endif %}
+  </div>
+
+  <div class="card-edit-text">
+    <h1>{{ card.title }}</h1>
+    <p class="muted">#{{ card.position }}{% if card.card_type %} · {{ card.card_type }}{% endif %}
+      {% if card.original_title and card.original_title != card.title %} · traditionally <em>{{ card.original_title }}</em>{% endif %}
+      {% if card.serial %} · <code>{{ card.serial }}</code>{% endif %}</p>
+    {% if card.symbols %}
+      <h3>Symbols</h3>
+      {% if card.symbols is string %}<p>{{ card.symbols }}</p>
+      {% else %}<ul class="chips">{% for s in card.symbols %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+    {% endif %}
+    {% if card.description %}<h3>Description</h3><p class="prose">{{ card.description }}</p>{% endif %}
+    {% if card.upright_interpretation %}<h3>Upright</h3><p class="prose">{{ card.upright_interpretation }}</p>{% endif %}
+    {% if card.reversed_interpretation %}<h3>Reversed</h3><p class="prose">{{ card.reversed_interpretation }}</p>{% endif %}
+    {% if card.prompt %}<details class="sub"><summary>Image prompt</summary><pre class="doc">{{ card.prompt }}</pre></details>{% endif %}
+
+    <section class="card-panel">
+      <h2>Edit this card</h2>
+      <p class="muted">Changes are saved to the deck immediately. Re-finalize to update the printed PDFs.</p>
+      {{ tool_form(TOOLS["edit_card"], decks, uploads, json_uploads, manifests, preset=ck, hide=["deck_name", "card_num"], label="Save change") }}
+    </section>
+    <section class="card-panel">
+      <h2>Regenerate this card</h2>
+      <p class="muted">Re-runs the meaning and art for just this card with your Venice key.</p>
+      {{ tool_form(TOOLS["generate_single_card"], decks, uploads, json_uploads, manifests, preset=ck, hide=["deck_name", "card_num"], label="Regenerate card") }}
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -268,6 +268,22 @@ def deck_exists(deck_name: str) -> bool:
     return os.path.exists(os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json"))
 
 
+def deck_images_dir(deck_name: str) -> str:
+    """Folder for one deck's card art: ``IMAGES_DIR/<deck>``.
+
+    Card image file names (``001_The_Fool.png``) are only unique within a deck,
+    so every deck needs its own folder or concurrent decks overwrite each other.
+    """
+    validate_deck_name(deck_name)
+    return os.path.join(Config.IMAGES_DIR, deck_name)
+
+
+def preview_raw_dir(deck_name: str) -> str:
+    """Scratch folder for raw style-preview renders of ``deck_name``."""
+    validate_deck_name(deck_name)
+    return os.path.join(Config.IMAGES_DIR, "previews", "_raw", deck_name)
+
+
 _ARTIFACT_SUFFIX_RE = re.compile(
     r"^_(?:"
     r"(?:PRINT|BACKS|DUPLEX)_[a-z0-9]+_[a-z]+(?:_[a-z_]+)?\.pdf"
@@ -447,6 +463,11 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
     back = meta.get("back_image", "")
     if back and os.path.exists(back):
         os.remove(back)
+
+    # Remove the deck's own image folder if nothing else is left in it
+    img_dir = deck_images_dir(deck_name)
+    if os.path.isdir(img_dir) and not os.listdir(img_dir):
+        os.rmdir(img_dir)
 
     # Remove from index
     with _INDEX_LOCK:

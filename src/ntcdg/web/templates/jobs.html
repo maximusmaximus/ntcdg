@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Jobs — NTCDG{% endblock %}
+{% block content %}
+<h1>Your jobs</h1>
+<p class="muted">Long-running tools (generation, printing, exports) run in the background. History is kept across restarts.</p>
+{% include "_jobs_table.html" %}
+{% endblock %}

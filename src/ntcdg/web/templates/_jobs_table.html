@@ -1,0 +1,18 @@
+{% if jobs %}
+<table class="jobs-table">
+  <thead><tr><th>Tool</th><th>Deck</th><th>Status</th><th>Started</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td><code>{{ j.tool }}</code></td>
+      <td>{% if j.deck %}<a href="/decks/{{ j.deck }}">{{ j.deck }}</a>{% endif %}</td>
+      <td><span class="status s-{{ j.status }}">{{ j.status }}</span>{% if j.error %}<br><small class="muted">{{ j.error[:120] }}</small>{% endif %}</td>
+      <td class="small">{{ (j.created_at or "")[:19].replace("T", " ") }}</td>
+      <td><a href="/jobs/{{ j.id }}/view">details</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No jobs yet.</p>
+{% endif %}

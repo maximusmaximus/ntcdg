@@ -152,8 +152,8 @@ aesthetic from the symbol images.
 
 | File | Path |
 |------|------|
-| Card images | `generated_decks/images/*.png` |
-| Preview images | `generated_decks/images/previews/*.png` |
+| Card images | `generated_decks/images/DeckName/*.png` (one folder per deck) |
+| Preview images | `generated_decks/images/previews/*.png` (raw renders in `previews/_raw/DeckName/`) |
 | Deck JSON | `generated_decks/DeckName.json` |
 | Print PDFs | `generated_decks/DeckName_PRINT_*.pdf` |
 | Duplex PDF | `generated_decks/DeckName_DUPLEX_<sheet>_<color>_<flip>.pdf` |
@@ -163,6 +163,16 @@ aesthetic from the symbol images.
 | Spreadsheet | `generated_decks/DeckName_MASTER.xlsx` |
 | Export bundle | `generated_decks/DeckName_BUNDLE.zip` |
 | Back image | `generated_decks/images/DeckName_BACK.png` |
+
+## Web App
+
+`pip install -e ".[web]"` then `NTCDG_WEB_SECRET=... NTCDG_PUBLIC_BASE_URL=https://tarot.example.com ntcdg-web`
+(`NTCDG_WEB_DEV=1 ntcdg-web` for local testing). Users sign up, store their own Venice key
+(encrypted; there is no fallback to the server's `VENICE_API_KEY`), and use every MCP tool from
+guided pages or the `/workbench`, with live job logs. Web decks are stored as
+`<username>__<deck>` in the same `generated_decks/` folder — don't edit them from the CLI while
+the site is running. The public viewer behind each QR code lives at `/c/<deck-slug>/<card-slug>`.
+See the README "Web App" section for deployment (HTTPS, reverse proxy, wildcard DNS/TLS).
 
 ## Typical Agent Workflow
 

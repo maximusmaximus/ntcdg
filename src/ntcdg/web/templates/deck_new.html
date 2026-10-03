@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tool_form %}
+{% block title %}New deck — NTCDG{% endblock %}
+{% block content %}
+<h1>Make a new deck</h1>
+<p class="lead">Work through the steps in order — or skip straight to step 5 if you just want a deck from a vibe.
+  Every step shows exactly what is sent and what comes back.</p>
+{% if not has_key %}<div class="flash warn">Steps marked <span class="badge key">uses Venice</span> spend credits from
+  <strong>your own</strong> Venice API key. <a href="/profile#venice-key">Add your key on your profile</a> first.</div>{% endif %}
+
+<datalist id="decklist">{% for d in decks %}<option value="{{ d }}">{% endfor %}</datalist>
+
+<div class="card-panel">
+  <label class="deckname-master"><span class="pname">Deck name</span>
+    <input data-sync="deckname" data-sync-master maxlength="60" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,59}"
+           placeholder="e.g. river-of-stars" autocomplete="off">
+  </label>
+  <small class="muted">Letters, numbers, <code>-</code> and <code>_</code>. Typed once, used by every step below.</small>
+</div>
+
+<ol class="wizard">
+  <li class="step card-panel">
+    <h2><span class="num">1</span> Plan <span class="muted">(optional)</span></h2>
+    <p>Describe the deck you dream of and let Venice suggest a vibe and prompt, or estimate what it will cost.</p>
+    <details class="sub"><summary>Suggest a deck from a description</summary>
+      {{ tool_form(TOOLS["suggest_deck"], decks, uploads, json_uploads, manifests) }}
+    </details>
+    <details class="sub"><summary>Estimate cost</summary>
+      {{ tool_form(TOOLS["estimate_cost"], decks, uploads, json_uploads, manifests) }}
+    </details>
+  </li>
+
+  <li class="step card-panel">
+    <h2><span class="num">2</span> Bring your own symbols <span class="muted">(optional)</span></h2>
+    <p>Upload your own artwork — sigils, motifs, photos — to weave into the cards. Then register them as the deck's
+      symbol set. Venice can describe each image for you.</p>
+    <form class="upload-form" data-kind="image">
+      <label>Images <input type="file" name="file" accept="image/*" multiple required></label>
+      <button class="btn small" type="submit">Upload images</button>
+    </form>
+    <ul class="upload-list" data-upload-list>
+      {% for u in uploads %}<li data-id="{{ u.id }}"><img src="/uploads/{{ u.id }}" alt="" loading="lazy"><code>upload:{{ u.id }}</code> <span>{{ u.original_name }}</span></li>{% endfor %}
+    </ul>
+    <details class="sub"><summary>Register symbols for this deck</summary>
+      {{ tool_form(TOOLS["register_symbols"], decks, uploads, json_uploads, manifests, preset={"auto_describe": true}) }}
+    </details>
+    <details class="sub"><summary>See how your symbols match traditional tarot</summary>
+      {{ tool_form(TOOLS["match_symbols"], decks, uploads, json_uploads, manifests) }}
+    </details>
+    <details class="sub"><summary>Fill gaps with generated symbols</summary>
+      {{ tool_form(TOOLS["complete_symbols"], decks, uploads, json_uploads, manifests) }}
+    </details>
+  </li>
+
+  <li class="step card-panel">
+    <h2><span class="num">3</span> Preview the style <span class="muted">(recommended)</span></h2>
+    <p>Render a few sample cards before committing to a whole deck. Previews do not create the deck.</p>
+    {{ tool_form(TOOLS["preview_style"], decks, uploads, json_uploads, manifests) }}
+  </li>
+
+  <li class="step card-panel">
+    <h2><span class="num">4</span> Look up traditional symbolism <span class="muted">(optional)</span></h2>
+    <p>Browse the classic symbols behind any card for inspiration.</p>
+    {{ tool_form(TOOLS["get_traditional_symbols"], decks, uploads, json_uploads, manifests) }}
+  </li>
+
+  <li class="step card-panel">
+    <h2><span class="num">5</span> Create the deck</h2>
+    <p>Generates the cards — names, meanings and art — as a background job. You can watch each card arrive live, and
+      leave the page: the job keeps running.</p>
+    {{ tool_form(TOOLS["create_deck"], decks, uploads, json_uploads, manifests, label="Create my deck") }}
+  </li>
+</ol>
+{% endblock %}

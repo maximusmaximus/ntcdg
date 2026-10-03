@@ -1,0 +1,20 @@
+{# "Scan another card" — shown only when JS + a camera are available (scanner.js removes [hidden]). #}
+<button type="button" class="btn scan-btn" data-scan hidden
+        data-hosts="{{ scanner.hosts }}" data-suffix="{{ scanner.suffix }}"
+        data-jsqr-url="{{ jsqr_url }}" data-jsqr-sri="{{ jsqr_sri }}">
+  <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 3h6v2H5v4H3V3zm12 0h6v6h-2V5h-4V3zM3 15h2v4h4v2H3v-6zm16 0h2v6h-6v-2h4v-4zM7 11h10v2H7z"/></svg>
+  Scan another card
+</button>
+<dialog class="scanner" data-scanner aria-label="Scan a card's QR code">
+  <div class="scanner-inner">
+    <video data-scanner-video playsinline muted></video>
+    <div class="scanner-frame" aria-hidden="true"></div>
+    <p class="scanner-status" data-scanner-status role="status">Point your camera at the QR code on the back of a card.</p>
+    <div class="scanner-warn" data-scanner-warn hidden>
+      <p><strong>This code points somewhere else.</strong> It is not an NTCDG card from this site:</p>
+      <p><code data-scanner-url></code></p>
+      <p><a class="btn ghost small" data-scanner-open rel="noopener noreferrer nofollow" href="#">Open anyway</a></p>
+    </div>
+    <button type="button" class="btn ghost" data-scanner-close>Close</button>
+  </div>
+</dialog>

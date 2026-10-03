@@ -37,16 +37,27 @@ dependencies = [
 mcp = [
     "mcp[cli]>=1.0.0",
 ]
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "itsdangerous>=2.1",
+    "cryptography>=42",
+]
 dev = [
     "ruff",
     "mypy",
     "pytest",
+    "httpx",
+    "ntcdg[web]",
 ]
 
 [project.scripts]
 ntcdg = "ntcdg.cli:main"
 ntcdg-tui = "ntcdg.tui:main"
 ntcdg-mcp = "ntcdg.mcp_server:main"
+ntcdg-web = "ntcdg.web.app:main"
 
 [project.urls]
 Homepage = "https://github.com/maximusmaximus/ntcdg"
@@ -57,7 +68,7 @@ Issues = "https://github.com/maximusmaximus/ntcdg/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.md", "*.txt", "*.json", "LICENSE"]
+"*" = ["*.md", "*.txt", "*.json", "LICENSE", "*.html", "*.css", "*.js", "*.svg"]
 
 [tool.ruff]
 target-version = "py310"
