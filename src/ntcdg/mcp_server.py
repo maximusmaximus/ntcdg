@@ -127,6 +127,9 @@ def create_deck(
     symbol_mode: str = "generate",
     symbols_file: str = "",
     image_size: str = "",
+    traditional_mode: bool = True,
+    auto_complete_symbols: bool = False,
+    sheet_size: str = "letter",
 ) -> dict[str, Any]:
     """Create a new tarot card deck with AI-generated art and meanings.
 
@@ -137,7 +140,10 @@ def create_deck(
         deck_prompt: Additional theme instructions
         symbol_mode: "generate" (AI creates) or "provide" (user artwork)
         symbols_file: Path to symbols.json (when symbol_mode="provide")
-        image_size: Image dimensions (default: 832x1280)
+        image_size: Image dimensions (default: 768x1280 for 3:5 tarot bleed)
+        traditional_mode: If True, cards use authentic canonical tarot symbols
+        auto_complete_symbols: If True, AI completes missing traditional symbols in artist style
+        sheet_size: Print sheet size ("letter", "tabloid", "a4", "a3")
     """
     from .generator import generate_deck
 
@@ -161,6 +167,9 @@ def create_deck(
         symbol_mode=symbol_mode,
         symbols_file=symbols_file or None,
         preview=False,       # No interactive preview
+        traditional_mode=traditional_mode,
+        auto_complete_symbols=auto_complete_symbols,
+        sheet_size=sheet_size,
     )
 
     return _deck_summary(name)
@@ -356,18 +365,24 @@ def finalize_deck(
     deck_name: str,
     sheet_size: str = "letter",
     color_mode: str = "color",
+    duplex_flip: str = "long_edge",
 ) -> dict[str, Any]:
     """Generate print-ready PDFs for a deck (fronts, backs, booklet).
 
     Args:
         deck_name: Name of the deck to finalize
-        sheet_size: "letter" (8.5x11) or "tabloid" (11x17)
+        sheet_size: "letter" (8.5x11), "tabloid" (11x17), "a4", or "a3"
         color_mode: "color" or "bw" (both output as CMYK)
+        duplex_flip: "long_edge" (standard duplex alignment) or "short_edge"
     """
     from .finalize import finalize_deck as _finalize
 
     output = _capture_print(
-        _finalize, deck_name, sheet_size=sheet_size, color_mode=color_mode,
+        _finalize,
+        deck_name,
+        sheet_size=sheet_size,
+        color_mode=color_mode,
+        duplex_flip=duplex_flip,
     )
 
     # Collect output file paths
@@ -531,6 +546,7 @@ def register_symbols(
     deck_name: str,
     symbols: list[dict[str, str]],
     auto_describe: bool = True,
+    traditional_match: bool = True,
 ) -> dict[str, Any]:
     """Register user-provided symbol artwork for a deck.
 
@@ -546,6 +562,8 @@ def register_symbols(
             - "description": (optional) description of the symbol
         auto_describe: If True, use Venice vision model to auto-generate
             descriptions for symbols that don't have one
+        traditional_match: If True, correlates symbols with traditional
+            tarot archetypes and reports deck coverage
 
     Example:
         register_symbols("Gothic_Rose", [
@@ -588,6 +606,7 @@ def register_symbols(
             "name": name,
             "description": description,
             "image": os.path.abspath(dest_path),
+            "source": "artist",
         })
 
     # Auto-describe symbols that lack descriptions
@@ -618,7 +637,13 @@ def register_symbols(
     with open(symbols_file, "w") as f:
         json_mod.dump(symbols_config, f, indent=2)
 
-    return {
+    # Optional traditional tarot symbol matching analysis
+    coverage_info = None
+    if traditional_match and registered:
+        from .symbols import TraditionalDeckRegistry
+        coverage_info = TraditionalDeckRegistry.match_artist_symbols(registered)
+
+    response: dict[str, Any] = {
         "success": True,
         "symbols_file": os.path.abspath(symbols_file),
         "symbols_dir": os.path.abspath(symbols_dir),
@@ -633,6 +658,21 @@ def register_symbols(
             f'symbol_mode="provide", symbols_file="{os.path.abspath(symbols_file)}")'
         ),
     }
+
+    if coverage_info:
+        response["traditional_coverage"] = coverage_info["coverage"]
+        response["matched_traditional"] = [
+            {
+                "traditional_name": m["traditional_name"],
+                "traditional_category": m["traditional_category"],
+                "associated_cards": m["associated_cards"],
+                "artist_symbol": m["artist_symbol"]["name"],
+            }
+            for m in coverage_info.get("matched", [])
+        ]
+        response["missing_traditional_count"] = coverage_info.get("missing_count", 0)
+
+    return response
 
 
 def _describe_artwork(
@@ -811,6 +851,259 @@ def describe_symbols(
         return {"error": f"Symbol analysis failed: {e}"}
 
 
+# ==================== TRADITIONAL TAROT & ARTIST TOOLING ====================
+
+@mcp.tool()
+def get_traditional_symbols(
+    query: str = "",
+    card_name: str = "",
+    suit: str = "",
+    arcana_type: str = "all",
+) -> dict[str, Any]:
+    """Browse or search canonical traditional tarot symbols and archetypes.
+
+    Artists and AI agents can query canonical Rider-Waite-Smith and esoteric
+    symbolism to plan custom deck art, inspect archetype descriptions, or
+    identify which symbols belong to specific cards or suits.
+
+    Args:
+        query: Search string to match in symbol names, descriptions, or keywords
+        card_name: Specific card title (e.g., 'The Fool', 'Three of Cups', 'The World')
+        suit: Filter by suit ('Wands', 'Cups', 'Swords', 'Pentacles')
+        arcana_type: Filter by arcana category ('all', 'major', 'suit', 'court')
+    """
+    from .symbols import TraditionalDeckRegistry
+
+    all_symbols = TraditionalDeckRegistry.get_all_symbols()
+    results = all_symbols
+
+    if card_name:
+        results = TraditionalDeckRegistry.get_symbols_for_card(card_name)
+
+    if suit:
+        suit_lower = suit.lower()
+        results = [
+            s for s in results
+            if s.get("category") == f"suit_{suit_lower}"
+            or any(suit_lower in c.lower() for c in s.get("cards", []))
+        ]
+
+    if arcana_type and arcana_type != "all":
+        if arcana_type == "major":
+            results = [s for s in results if s.get("category") == "major_arcana"]
+        elif arcana_type == "suit":
+            results = [s for s in results if s.get("category", "").startswith("suit_")]
+        elif arcana_type == "court":
+            results = [s for s in results if s.get("category") == "court"]
+
+    if query:
+        q = query.lower().strip()
+        filtered = []
+        for s in results:
+            name = s.get("name", "").lower()
+            desc = s.get("description", "").lower()
+            kws = " ".join(s.get("keywords", [])).lower()
+            cards_str = " ".join(s.get("cards", [])).lower()
+            if q in name or q in desc or q in kws or q in cards_str:
+                filtered.append(s)
+        results = filtered
+
+    return {
+        "count": len(results),
+        "total_canonical": len(all_symbols),
+        "symbols": results,
+    }
+
+
+@mcp.tool()
+def match_symbols(
+    symbols: list[dict[str, str]] = None,
+    symbols_file: str = "",
+    target_scope: str = "full",
+) -> dict[str, Any]:
+    """Match artist-provided symbols against canonical traditional tarot archetypes.
+
+    Analyzes a list of artist symbols or an existing symbols.json file.
+    Reports which traditional tarot symbols are satisfied, which cards
+    they correspond to, what traditional symbols remain missing, and
+    overall deck coverage statistics.
+
+    Args:
+        symbols: List of symbol dicts (each with 'name' and optional 'description')
+        symbols_file: Path to symbols.json file (used if symbols is not provided)
+        target_scope: 'full' (all 78 cards), 'major' (22 Major Arcana), or 'suits' (4 suits)
+    """
+    from .symbols import TraditionalDeckRegistry, load_symbols_config
+
+    symbol_list = []
+    if symbols:
+        symbol_list = symbols
+    elif symbols_file:
+        cfg = load_symbols_config(symbols_file)
+        symbol_list = cfg.get("symbols", [])
+
+    if not symbol_list:
+        return {"error": "No symbols provided or symbols file empty", "count": 0}
+
+    analysis = TraditionalDeckRegistry.match_artist_symbols(symbol_list)
+
+    missing = analysis["missing_traditional"]
+    if target_scope == "major":
+        missing = [s for s in missing if s.get("category") == "major_arcana"]
+    elif target_scope == "suits":
+        missing = [s for s in missing if s.get("category", "").startswith("suit_")]
+
+    return {
+        "success": True,
+        "provided_count": len(symbol_list),
+        "matched_count": analysis["matched_count"],
+        "unmatched_count": analysis["unmatched_count"],
+        "missing_count": len(missing),
+        "coverage": analysis["coverage"],
+        "matched": [
+            {
+                "traditional_name": m["traditional_name"],
+                "traditional_category": m["traditional_category"],
+                "associated_cards": m["associated_cards"],
+                "match_score": m["match_score"],
+                "artist_symbol": m["artist_symbol"]["name"],
+            }
+            for m in analysis["matched"]
+        ],
+        "unmatched_artist_symbols": [
+            s.get("name", "") for s in analysis["unmatched_artist"]
+        ],
+        "missing_traditional_sample": [
+            {"name": s["name"], "category": s["category"], "cards": s["cards"][:3]}
+            for s in missing[:15]
+        ],
+        "recommendation": (
+            "Call complete_symbols() to auto-generate reference artwork for missing symbols, "
+            "or proceed directly to create_deck(traditional_mode=True)."
+        ),
+    }
+
+
+@mcp.tool()
+def complete_symbols(
+    deck_name: str,
+    symbols_file: str = "",
+    style_prompt: str = "",
+    target_scope: str = "full",
+    max_generate: int = 15,
+) -> dict[str, Any]:
+    """Generate missing traditional tarot symbols in the artist's visual style using Venice AI.
+
+    Takes an artist's partial symbol set, identifies unfulfilled traditional tarot
+    archetypes, and generates cohesive reference images using Venice AI (qwen-image-3-pro).
+    Saves an updated symbols.json manifest marking which symbols are artist-supplied
+    and which were AI-generated.
+
+    Args:
+        deck_name: Name of the deck
+        symbols_file: Path to existing symbols.json (or default symbols if omitted)
+        style_prompt: Visual aesthetic description to harmonize generated symbols
+        target_scope: 'full' (all cards), 'major' (22 Major Arcana), or 'suits'
+        max_generate: Maximum number of missing symbols to generate (default 15)
+    """
+    from .symbols import TraditionalDeckRegistry, load_symbols_config
+
+    venice_key = _get_venice_key()
+    cfg = load_symbols_config(symbols_file or None)
+    if style_prompt:
+        cfg["style_prompt"] = style_prompt
+
+    completed_cfg = TraditionalDeckRegistry.complete_deck_symbols(
+        symbols_config=cfg,
+        deck_name=deck_name,
+        deck_prompt="",
+        api_key=venice_key,
+        image_model=Config.DEFAULT_IMAGE_MODEL,
+        target_scope=target_scope,
+        max_missing=max_generate,
+        rate_limit=1.5,
+    )
+
+    symbols_dir = os.path.join(Config.OUTPUT_DIR, deck_name, "symbols")
+    manifest_file = os.path.join(symbols_dir, "symbols.json")
+
+    return {
+        "success": True,
+        "deck_name": deck_name,
+        "symbols_file": os.path.abspath(manifest_file),
+        "total_symbols": len(completed_cfg.get("symbols", [])),
+        "artist_symbols_count": completed_cfg.get("artist_symbol_count", 0),
+        "generated_symbols_count": completed_cfg.get("generated_symbol_count", 0),
+        "usage_hint": (
+            f'Call create_deck(name="{deck_name}", symbol_mode="provide", '
+            f'symbols_file="{os.path.abspath(manifest_file)}", traditional_mode=True)'
+        ),
+    }
+
+
+@mcp.tool()
+def get_deck_traditional_coverage(deck_name: str) -> dict[str, Any]:
+    """Audit traditional tarot symbolism coverage for an existing deck.
+
+    Inspects all cards in the deck, checks which canonical traditional
+    archetypes are present in card symbols and prompts, and determines
+    whether artist symbols or AI-completed symbols were used.
+
+    Args:
+        deck_name: Name of the deck to audit
+    """
+    from .storage import load_deck
+    from .symbols import TraditionalDeckRegistry
+
+    deck = load_deck(deck_name)
+    if not deck:
+        return {"error": f"Deck '{deck_name}' not found"}
+
+    all_canonical = TraditionalDeckRegistry.get_all_symbols()
+    card_reports = []
+    canonical_hits: set[str] = set()
+
+    for card in sorted(deck, key=lambda c: c.position or 0):
+        c_symbols = card.symbols or []
+        card_canons = TraditionalDeckRegistry.get_symbols_for_card(card.title)
+        matched_canons_for_card = []
+
+        for canon in card_canons:
+            cid = canon["id"]
+            cname = canon["name"].lower()
+            ckws = [kw.lower() for kw in canon.get("keywords", [])]
+
+            found = False
+            for cs in c_symbols:
+                cs_lower = cs.lower()
+                if cname in cs_lower or any(kw in cs_lower for kw in ckws):
+                    found = True
+                    break
+
+            if found:
+                canonical_hits.add(cid)
+                matched_canons_for_card.append(canon["name"])
+
+        card_reports.append({
+            "position": card.position,
+            "title": card.title,
+            "card_type": card.card_type,
+            "symbols_count": len(c_symbols),
+            "traditional_symbols_found": matched_canons_for_card,
+        })
+
+    coverage_pct = round((len(canonical_hits) / len(all_canonical)) * 100.0, 1) if all_canonical else 0.0
+
+    return {
+        "deck_name": deck_name,
+        "total_cards": len(deck),
+        "total_canonical_symbols": len(all_canonical),
+        "canonical_symbols_covered": len(canonical_hits),
+        "traditional_coverage_percentage": coverage_pct,
+        "cards": card_reports,
+    }
+
+
 # ==================== AGENTIC WORKFLOW TOOLS ====================
 
 @mcp.tool()
@@ -909,6 +1202,7 @@ def preview_style(
     deck_prompt: str = "",
     symbol_mode: str = "generate",
     symbols_file: str = "",
+    traditional_mode: bool = True,
 ) -> dict[str, Any]:
     """Generate 3 preview cards to test a deck's visual style.
 
@@ -922,6 +1216,7 @@ def preview_style(
         deck_prompt: Additional theme instructions
         symbol_mode: "generate" or "provide"
         symbols_file: Path to symbols.json if symbol_mode="provide"
+        traditional_mode: If True, preview cards feature traditional tarot symbols
     """
     from .generator import (
         _PREVIEW_CARDS,
@@ -969,6 +1264,7 @@ def preview_style(
             position=i + 1, total=3, card_def=card_def,
             deck_vibe=vibe, deck_prompt=deck_prompt,
             symbols=symbols_config["symbols"],
+            traditional_mode=traditional_mode,
         )
 
         if deck_style:
