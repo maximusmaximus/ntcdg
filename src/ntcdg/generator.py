@@ -77,6 +77,7 @@ def generate_card(
     deck_vibe: str,
     deck_prompt: str = "",
     symbols: list[dict[str, Any]] = None,
+    traditional_mode: bool = True,
 ) -> Card:
     """
     Enrich a card definition with symbols, layout, and prompt.
@@ -88,17 +89,26 @@ def generate_card(
     suit = card_def.get("suit")
     rank = card_def.get("rank")
 
-    card_symbols = []
-    if suit and isinstance(rank, int):
-        card_symbols.append(f"{rank} glowing {suit.lower()}")
-    elif suit:
-        card_symbols.append(f"prominent {suit.lower()}")
+    if traditional_mode:
+        from .symbols import TraditionalDeckRegistry
+        card_symbols = TraditionalDeckRegistry.assign_symbols_for_card(
+            card_def=card_def,
+            available_symbols=symbols,
+            traditional_mode=True,
+            max_symbols=4,
+        )
+    else:
+        card_symbols = []
+        if suit and isinstance(rank, int):
+            card_symbols.append(f"{rank} glowing {suit.lower()}")
+        elif suit:
+            card_symbols.append(f"prominent {suit.lower()}")
 
-    # Select symbols from user-defined list (or defaults)
-    available = symbols or Config.DEFAULT_SYMBOLS
-    symbol_names = [s["name"] if isinstance(s, dict) else s for s in available]
-    num_pick = min(4, len(symbol_names))
-    card_symbols.extend(random.sample(symbol_names, k=num_pick))
+        # Select symbols from user-defined list (or defaults)
+        available = symbols or Config.DEFAULT_SYMBOLS
+        symbol_names = [s["name"] if isinstance(s, dict) else s for s in available]
+        num_pick = min(4, len(symbol_names))
+        card_symbols.extend(random.sample(symbol_names, k=num_pick))
 
     if is_first:
         layout = "expansive opening spiral vortex, light emerging outward"
@@ -402,6 +412,7 @@ def preview_deck_style(
     symbol_mode: str = "generate",
     symbol_images: dict[str, str] = None,
     font_path: str = None,
+    traditional_mode: bool = True,
 ) -> tuple[bool, str, str]:
     """Generate 3 preview cards and ask user to approve the style.
 
@@ -422,6 +433,7 @@ def preview_deck_style(
             position=i + 1, total=3, card_def=card_def,
             deck_vibe=deck_vibe, deck_prompt=deck_prompt,
             symbols=symbols or Config.DEFAULT_SYMBOLS,
+            traditional_mode=traditional_mode,
         )
 
         # Refine prompt with style
@@ -525,6 +537,9 @@ def generate_deck(
     font_path: str = None,
     resume: bool = False,
     preview: bool = True,
+    traditional_mode: bool = True,
+    auto_complete_symbols: bool = False,
+    sheet_size: str = "letter",
 ):
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
@@ -555,7 +570,20 @@ def generate_deck(
     # --- Load and prepare symbols ---
     symbols_config = load_symbols_config(symbols_file)
 
-    if symbol_mode == "generate" and generate_images and venice_key:
+    if auto_complete_symbols and generate_images and venice_key:
+        from .symbols import TraditionalDeckRegistry
+        logger.info("Auto-completing missing traditional symbols using Venice AI...")
+        scope = "major" if num_cards <= 22 else "full"
+        symbols_config = TraditionalDeckRegistry.complete_deck_symbols(
+            symbols_config=symbols_config,
+            deck_name=name,
+            deck_prompt=deck_prompt,
+            api_key=venice_key,
+            image_model=image_model,
+            target_scope=scope,
+            rate_limit=rate_limit,
+        )
+    elif symbol_mode == "generate" and generate_images and venice_key:
         logger.info("Generating cohesive symbol images before card generation...")
         symbols_config = generate_symbol_images(
             symbols_config, name, deck_prompt, venice_key, image_model, rate_limit,
@@ -632,6 +660,7 @@ def generate_deck(
                 symbol_mode=symbol_mode,
                 symbol_images=symbol_images,
                 font_path=font_path,
+                traditional_mode=traditional_mode,
             )
             if not approved:
                 return  # User cancelled
@@ -702,6 +731,7 @@ def generate_deck(
         card = generate_card(
             position, num_cards, card_def, deck_vibe, deck_prompt,
             symbols=symbols_config["symbols"],
+            traditional_mode=traditional_mode,
         )
 
         # --- Refine prompt with LLM (style-aware) ---

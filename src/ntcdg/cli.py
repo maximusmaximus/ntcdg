@@ -83,6 +83,18 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
         help="Show API usage, cost estimate, and style prompt for a deck",
     )
     cmds.add_argument(
+        "--traditional-symbols", action="store_true",
+        help="List canonical traditional tarot archetypal symbols",
+    )
+    cmds.add_argument(
+        "--match-symbols", type=str, default=None, metavar="FILE",
+        help="Match symbols in a JSON file against traditional tarot archetypes",
+    )
+    cmds.add_argument(
+        "--deck-coverage", type=str, default=None, metavar="DECK",
+        help="Audit traditional tarot symbol coverage for a deck",
+    )
+    cmds.add_argument(
         "--init-config", action="store_true",
         help="Create a sample ~/.ntcdgrc config file",
     )
@@ -96,6 +108,14 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
     gen.add_argument("--analyze", action="store_true")
     gen.add_argument("--generate-images", action="store_true")
     gen.add_argument("--no-interactive", action="store_true")
+    gen.add_argument(
+        "--traditional", action=argparse.BooleanOptionalAction, default=True,
+        help="Enable/disable traditional tarot symbol correspondences (default: enabled)",
+    )
+    gen.add_argument(
+        "--complete-symbols", action="store_true", default=False,
+        help="Auto-complete missing traditional symbols in artist style using Venice AI",
+    )
     gen.add_argument(
         "--resume", action="store_true",
         help="Resume generation, skipping completed cards",
@@ -173,8 +193,13 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
     fin = parser.add_argument_group("Finalization options")
     fin.add_argument(
         "--sheet-size", type=str, default="letter",
-        choices=["letter", "tabloid"],
-        help="'letter' (8.5x11) or 'tabloid' (11x17)",
+        choices=["letter", "tabloid", "a4", "a3"],
+        help="'letter' (8.5x11), 'tabloid' (11x17), 'a4', or 'a3'",
+    )
+    fin.add_argument(
+        "--duplex-flip", type=str, default="long_edge",
+        choices=["long_edge", "short_edge", "none"],
+        help="Duplex flip edge ('long_edge', 'short_edge', 'none')",
     )
     fin.add_argument(
         "--color-mode", type=str, default="color",
@@ -365,12 +390,72 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
         from .storage import clone_deck
         clone_deck(args.clone_deck[0], args.clone_deck[1])
 
+    elif args.traditional_symbols:
+        from .symbols import TraditionalDeckRegistry
+        symbols = TraditionalDeckRegistry.get_all_symbols()
+        print(f"\nCanonical Traditional Tarot Symbols ({len(symbols)} archetypes):\n")
+        for s in symbols:
+            cards_str = ", ".join(s.get("cards", []))
+            print(f"  * {s['name'].title()} [{s['category']}] - {cards_str}")
+            print(f"    {s['description']}")
+            print(f"    Keywords: {', '.join(s.get('keywords', []))}\n")
+
+    elif args.match_symbols:
+        from .symbols import TraditionalDeckRegistry, load_symbols_config
+        cfg = load_symbols_config(args.match_symbols)
+        res = TraditionalDeckRegistry.match_artist_symbols(cfg.get("symbols", []))
+        cov = res["coverage"]
+        print(f"\nTraditional Symbol Coverage for '{args.match_symbols}':")
+        print(f"  Provided: {cov['provided_symbols_count']} symbols")
+        matched_str = f"{cov['matched_traditional_count']}/{cov['total_traditional_symbols']}"
+        print(f"  Matched Traditional: {matched_str} ({cov['coverage_percentage']}%)")
+        print(f"  Suits Covered: {', '.join(cov['suits_covered']) or 'None'}")
+        print(f"  Suits Missing: {', '.join(cov['suits_missing']) or 'None'}")
+        maj_str = f"Major Arcana ({cov['major_arcana_covered_count']}/22)"
+        print(f"  {maj_str}: {', '.join(cov['major_arcana_covered']) or 'None'}\n")
+        if res["matched"]:
+            print("  Matched Archetypes:")
+            for m in res["matched"][:10]:
+                assoc = ", ".join(m["associated_cards"][:2])
+                print(f"    - {m['artist_symbol']['name']} -> {m['traditional_name']} ({assoc})")
+        if res["unmatched_artist"]:
+            print("  Unmatched Custom Symbols (Used as Accent Flair):")
+            for u in res["unmatched_artist"]:
+                print(f"    - {u.get('name')}")
+
+    elif args.deck_coverage:
+        from .storage import load_deck
+        from .symbols import TraditionalDeckRegistry
+        deck = load_deck(args.deck_coverage)
+        if not deck:
+            print(f"Deck '{args.deck_coverage}' not found.")
+        else:
+            all_canonical = TraditionalDeckRegistry.get_all_symbols()
+            hits = set()
+            for card in deck:
+                c_symbols = card.symbols or []
+                card_canons = TraditionalDeckRegistry.get_symbols_for_card(card.title)
+                for canon in card_canons:
+                    cid = canon["id"]
+                    cname = canon["name"].lower()
+                    ckws = [kw.lower() for kw in canon.get("keywords", [])]
+                    for cs in c_symbols:
+                        cs_lower = cs.lower()
+                        if cname in cs_lower or any(kw in cs_lower for kw in ckws):
+                            hits.add(cid)
+                            break
+            pct = round((len(hits) / len(all_canonical)) * 100.0, 1) if all_canonical else 0.0
+            print(f"\nTraditional Symbol Coverage for Deck '{args.deck_coverage}':")
+            print(f"  Cards: {len(deck)}")
+            print(f"  Traditional Symbols Represented: {len(hits)}/{len(all_canonical)} ({pct}%)\n")
+
     elif args.finalize:
         from .finalize import finalize_deck
         finalize_deck(
             deck_name=args.finalize,
             sheet_size=args.sheet_size,
             color_mode=args.color_mode,
+            duplex_flip=args.duplex_flip,
         )
 
     elif args.deck:
@@ -394,6 +479,9 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             font_path=args.font,
             resume=args.resume,
             preview=not args.no_preview,
+            traditional_mode=args.traditional,
+            auto_complete_symbols=args.complete_symbols,
+            sheet_size=args.sheet_size,
         )
 
     else:
