@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 import os
-import shutil
 import tempfile
 
 from .config import HAS_REPORTLAB, Config, logger
@@ -85,6 +84,17 @@ def validate_deck(deck: list[Card]) -> dict:
             warnings.append(f"Card {pos}: no upright interpretation")
         if not getattr(card, "reversed_interpretation", None):
             warnings.append(f"Card {pos}: no reversed interpretation")
+
+    # Positions identify cards in QR URLs / slot labels -- they must be unique.
+    seen: dict[int, int] = {}
+    for card in deck:
+        if not card.position or int(card.position) < 1:
+            errors.append(f"Card '{card.title or '?'}': missing or invalid position")
+            continue
+        seen[int(card.position)] = seen.get(int(card.position), 0) + 1
+    for pos, n in sorted(seen.items()):
+        if n > 1:
+            errors.append(f"Position {pos} is used by {n} cards (positions must be unique)")
 
     return {"errors": errors, "warnings": warnings}
 
@@ -298,10 +308,13 @@ def create_print_pdf(
     color_mode: str = "color",
 ) -> str:
     """
-    Generate a print-ready CMYK PDF with sequential cards on sheets.
+    Generate a print-ready CMYK PDF of card fronts (side A).
 
-    Layout packs as many cards as possible per sheet with high-precision
-    crop marks and margin cutting guides for easy trimming.
+    Uses the same shared slot plan as the backs/duplex PDFs (see
+    :mod:`ntcdg.duplex`), so fronts printed from this file register with the
+    backs file. A card whose image cannot be prepared gets a placeholder
+    instead of being skipped -- skipping would shift every later card and
+    break front/back alignment.
 
     Args:
         deck: List of Card objects.
@@ -319,119 +332,19 @@ def create_print_pdf(
         logger.error("Pillow is required for print image conversion")
         return ""
 
-    sheet_w_in, sheet_h_in = SHEET_SIZES[sheet_size]
-    layout = _calculate_grid(sheet_w_in, sheet_h_in)
-
-    sheet_w = sheet_w_in * inch
-    sheet_h = sheet_h_in * inch
-
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-    pdf_path = os.path.join(
-        Config.OUTPUT_DIR,
-        f"{deck_name}_PRINT_{sheet_size}_{color_mode}.pdf",
-    )
-
-    c = pdf_canvas.Canvas(pdf_path, pagesize=(sheet_w, sheet_h))
-    c.setTitle(f"{deck_name} — Print Ready ({sheet_size.title()}, {color_mode.upper()} CMYK)")
-    c.setAuthor("NTCDG — Novel Tarot Card Deck Generator")
-
-    # Sort by position, filter to cards with existing images
-    sorted_deck = sorted(deck, key=lambda card: card.position or 0)
     printable = [
-        card for card in sorted_deck
+        card for card in deck
         if card.image_path and os.path.exists(str(card.image_path))
     ]
-
     if not printable:
         logger.error("No cards with images found — cannot create print PDF")
         return ""
 
-    cards_per_page = layout["cards_per_page"]
-    total_pages = math.ceil(len(printable) / cards_per_page)
-
-    logger.info(
-        f"Print layout: {layout['cols']}x{layout['rows']} = "
-        f"{cards_per_page} cards/page, {total_pages} pages for {len(printable)} cards"
+    from .duplex import create_duplex_pdfs
+    written = create_duplex_pdfs(
+        printable, deck_name, sheet_size, color_mode, outputs=("fronts",),
     )
-
-    tmp_dir = tempfile.mkdtemp(prefix="ntcdg_print_")
-
-    try:
-        for page_idx in range(total_pages):
-            start = page_idx * cards_per_page
-            page_cards = printable[start : start + cards_per_page]
-
-            # Draw sheet-level continuous cutting guides at margins
-            _draw_sheet_guides(c, layout, sheet_w_in, sheet_h_in)
-
-            for i, card in enumerate(page_cards):
-                row = i // layout["cols"]
-                col = i % layout["cols"]
-
-                # Card bleed area position (in inches, from page origin)
-                bleed_x_in = layout["start_x"] + col * (CARD_BLEED_W + CELL_GAP)
-                # ReportLab y=0 is bottom; lay out from top of page downward
-                bleed_y_in = (
-                    sheet_h_in
-                    - layout["start_y"]
-                    - (row + 1) * CARD_BLEED_H
-                    - row * CELL_GAP
-                )
-
-                bleed_x = bleed_x_in * inch
-                bleed_y = bleed_y_in * inch
-
-                # Prepare CMYK image cropped to exact bleed aspect ratio
-                try:
-                    img_path = _prepare_image(card.image_path, color_mode, tmp_dir)
-                except Exception as e:
-                    logger.warning(f"Image prep failed for card {card.position}: {e}")
-                    continue
-
-                # Draw card image (filling the full bleed area edge-to-edge)
-                c.drawImage(
-                    img_path,
-                    bleed_x,
-                    bleed_y,
-                    width=CARD_BLEED_W * inch,
-                    height=CARD_BLEED_H * inch,
-                    preserveAspectRatio=False,
-                )
-
-                # Draw precision crop marks at trim corners
-                trim_x = bleed_x + BLEED * inch
-                trim_y = bleed_y + BLEED * inch
-                _draw_crop_marks(
-                    c,
-                    trim_x,
-                    trim_y,
-                    CARD_TRIM_W * inch,
-                    CARD_TRIM_H * inch,
-                    gutter_right=(col < layout["cols"] - 1),
-                    gutter_left=(col > 0),
-                    gutter_top=(row > 0),
-                    gutter_bottom=(row < layout["rows"] - 1),
-                )
-
-            # Page footer with scale and trim metadata
-            c.setFont("Helvetica", 7)
-            c.setFillColorCMYK(0, 0, 0, 0.5)
-            c.drawCentredString(
-                sheet_w / 2,
-                SHEET_MARGIN * inch * 0.4,
-                f"{deck_name}  ·  Page {page_idx + 1}/{total_pages}  ·  "
-                f"{sheet_size.title()}  ·  {color_mode.upper()} CMYK  ·  "
-                f"Trim: {CARD_TRIM_W}\" x {CARD_TRIM_H}\" (70x120mm) + {BLEED}\" bleed",
-            )
-
-            c.showPage()
-
-        c.save()
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    logger.info(f"Print PDF saved: {pdf_path}")
-    return pdf_path
+    return written.get("fronts", "")
 
 
 # ==================== CARD BACKS PDF ====================
@@ -442,12 +355,15 @@ def create_backs_pdf(
     sheet_size: str = "letter",
     color_mode: str = "color",
     duplex_flip: str = "long_edge",
+    back_offset_mm: tuple[float, float] = (0.0, 0.0),
 ) -> str:
     """
-    Generate a print-ready PDF of card backs.
+    Generate a print-ready PDF of identical card backs (side B).
 
-    Matches the grid layout of the fronts PDF. Supports 'long_edge' duplex flip
-    mirroring so double-sided printing aligns backs and fronts exactly.
+    Registered for ``duplex_flip``: ``long_edge`` mirrors columns,
+    ``short_edge`` mirrors rows and rotates each back 180 degrees (so cut cards
+    read upright when turned over sideways). For per-card backs with QR codes
+    use :func:`ntcdg.duplex.create_duplex_pdfs` (``finalize_deck`` does).
     """
     if not HAS_REPORTLAB or not HAS_PILLOW:
         logger.error("reportlab and Pillow required for backs PDF")
@@ -457,99 +373,13 @@ def create_backs_pdf(
         logger.error(f"Card back image not found: {back_image_path}")
         return ""
 
-    sheet_w_in, sheet_h_in = SHEET_SIZES[sheet_size]
-    layout = _calculate_grid(sheet_w_in, sheet_h_in)
-
-    sheet_w = sheet_w_in * inch
-    sheet_h = sheet_h_in * inch
-
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-    pdf_path = os.path.join(
-        Config.OUTPUT_DIR,
-        f"{deck_name}_BACKS_{sheet_size}_{color_mode}.pdf",
+    from .duplex import create_duplex_pdfs
+    written = create_duplex_pdfs(
+        None, deck_name, sheet_size, color_mode, duplex_flip,
+        back_image_path=back_image_path, back_offset_mm=back_offset_mm,
+        outputs=("backs",), num_cards=num_cards,
     )
-
-    c = pdf_canvas.Canvas(pdf_path, pagesize=(sheet_w, sheet_h))
-    c.setTitle(f"{deck_name} - Card Backs ({sheet_size.title()}, {color_mode.upper()} CMYK)")
-    c.setAuthor("NTCDG")
-
-    cards_per_page = layout["cards_per_page"]
-    total_pages = math.ceil(num_cards / cards_per_page)
-
-    tmp_dir = tempfile.mkdtemp(prefix="ntcdg_backs_")
-
-    try:
-        # Prepare the single back image (converted to CMYK and cropped to bleed aspect)
-        back_img = _prepare_image(back_image_path, color_mode, tmp_dir)
-
-        for page_idx in range(total_pages):
-            remaining = num_cards - page_idx * cards_per_page
-            slots = min(cards_per_page, remaining)
-
-            # Draw sheet-level continuous cutting guides at margins
-            _draw_sheet_guides(c, layout, sheet_w_in, sheet_h_in)
-
-            for i in range(slots):
-                row = i // layout["cols"]
-                front_col = i % layout["cols"]
-                # For long-edge duplex flipping, mirror columns horizontally so back aligns with front
-                col = (layout["cols"] - 1 - front_col) if duplex_flip == "long_edge" else front_col
-
-                bleed_x_in = layout["start_x"] + col * (CARD_BLEED_W + CELL_GAP)
-                bleed_y_in = (
-                    sheet_h_in
-                    - layout["start_y"]
-                    - (row + 1) * CARD_BLEED_H
-                    - row * CELL_GAP
-                )
-
-                bleed_x = bleed_x_in * inch
-                bleed_y = bleed_y_in * inch
-
-                # Back image fills FULL bleed area (no borders)
-                c.drawImage(
-                    back_img,
-                    bleed_x,
-                    bleed_y,
-                    width=CARD_BLEED_W * inch,
-                    height=CARD_BLEED_H * inch,
-                    preserveAspectRatio=False,
-                )
-
-                # Crop marks for cutting alignment
-                trim_x = bleed_x + BLEED * inch
-                trim_y = bleed_y + BLEED * inch
-                _draw_crop_marks(
-                    c,
-                    trim_x,
-                    trim_y,
-                    CARD_TRIM_W * inch,
-                    CARD_TRIM_H * inch,
-                    gutter_right=(col < layout["cols"] - 1),
-                    gutter_left=(col > 0),
-                    gutter_top=(row > 0),
-                    gutter_bottom=(row < layout["rows"] - 1),
-                )
-
-            # Page footer
-            c.setFont("Helvetica", 7)
-            c.setFillColorCMYK(0, 0, 0, 0.5)
-            c.drawCentredString(
-                sheet_w / 2,
-                SHEET_MARGIN * inch * 0.4,
-                f"{deck_name} BACKS  -  Page {page_idx + 1}/{total_pages}  -  "
-                f"{sheet_size.title()}  -  {color_mode.upper()} CMYK  -  "
-                f"Duplex: {duplex_flip.title()}",
-            )
-
-            c.showPage()
-
-        c.save()
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    logger.info(f"Backs PDF saved: {pdf_path}")
-    return pdf_path
+    return written.get("backs", "")
 
 
 # ==================== BOOKLET HELPERS ====================
@@ -919,6 +749,12 @@ def finalize_deck_report(
     sheet_size: str = "letter",
     color_mode: str = "color",
     duplex_flip: str = "long_edge",
+    *,
+    qr_codes: bool = True,
+    public_base_url: str | None = None,
+    rebase_url: bool = False,
+    allow_local_url: bool = False,
+    back_offset_mm: tuple[float, float] = (0.0, 0.0),
 ) -> dict:
     """
     Finalize a deck and return a structured report.
@@ -926,25 +762,34 @@ def finalize_deck_report(
     Steps:
     1. Load deck and validate completeness
     2. Report errors (block) and warnings (inform)
-    3. Generate CMYK print PDF with crop marks
-    4. Generate companion booklet PDF (card-sized)
-    5. Generate backs PDF registered for ``duplex_flip`` (if a back image exists)
+    3. Assign the deck's stable public slug/URL (for QR codes on the backs)
+    4. Render fronts, per-card backs and an interleaved DUPLEX PDF from one
+       shared slot plan, registered for ``duplex_flip`` (see :mod:`ntcdg.duplex`)
+    5. Generate companion booklet PDF (card-sized)
     6. Print summary
 
-    Returns ``{"success", "error", "print_pdf", "backs_pdf", "booklet_pdf",
-    "pages", "validation": {"errors", "warnings"}}``.
-    Raises ``ValueError`` for unsupported sheet/color/duplex options.
+    Returns ``{"success", "error", "print_pdf", "backs_pdf", "duplex_pdf",
+    "booklet_pdf", "pages", "validation": {"errors", "warnings"},
+    "qr": {"enabled", "base_url", "deck_slug", "reason"}, "warnings"}``.
+    Raises ``ValueError`` for unsupported sheet/color/duplex/offset options or an
+    invalid ``public_base_url``.
     """
+    from .duplex import create_duplex_pdfs, validate_offsets
+
     validate_print_options(sheet_size, color_mode, duplex_flip)
+    back_offset_mm = validate_offsets(back_offset_mm)
 
     result: dict = {
         "success": False,
         "error": "",
         "print_pdf": "",
         "backs_pdf": "",
+        "duplex_pdf": "",
         "booklet_pdf": "",
         "pages": 0,
         "validation": {"errors": [], "warnings": []},
+        "qr": {"enabled": False, "base_url": "", "deck_slug": "", "reason": ""},
+        "warnings": [],
     }
 
     deck = load_deck(deck_name)
@@ -961,6 +806,7 @@ def finalize_deck_report(
     print(f"Sheet: {sheet_size.title()} ({sheet_w}\" x {sheet_h}\")")
     print(f"Color: {color_mode.upper()} CMYK")
     print(f"Layout: {layout['cols']}x{layout['rows']} cards per sheet")
+    print(f"Duplex: flip on {duplex_flip.replace('_', ' ')}")
     print(f"{'=' * 60}")
 
     # --- Validate ---
@@ -986,55 +832,81 @@ def finalize_deck_report(
     if not report["warnings"]:
         print("\nDeck passes all completeness checks.")
 
-    # --- Generate print PDF ---
-    printable = [c for c in deck if c.image_path and os.path.exists(str(c.image_path))]
+    printable = sorted(
+        (c for c in deck if c.image_path and os.path.exists(str(c.image_path))),
+        key=lambda c: c.position or 0,
+    )
+    if not printable:
+        print("\nNo card images found on disk -- nothing to print.")
+        result["error"] = "No card images found to print"
+        return result
     total_pages = math.ceil(len(printable) / layout["cards_per_page"])
     result["pages"] = total_pages
 
-    print(f"\nGenerating print PDF ({len(printable)} cards -> {total_pages} pages)...")
-    pdf_path = create_print_pdf(deck, deck_name, sheet_size, color_mode)
+    # --- Public identity / QR codes ---
+    urls: dict[int, str] = {}
+    if qr_codes:
+        from .public import card_urls, ensure_public_identity
+        identity = ensure_public_identity(
+            deck_name, public_base_url, rebase=rebase_url, allow_local=allow_local_url,
+        )
+        result["warnings"].extend(identity["warnings"])
+        result["qr"] = {
+            "enabled": identity["enabled"], "base_url": identity["base_url"],
+            "deck_slug": identity["slug"], "reason": identity["reason"],
+        }
+        if identity["enabled"]:
+            urls = card_urls(identity, printable)
+            print(f"QR codes: {identity['base_url']} (deck slug {identity['slug']})")
+        else:
+            print(f"QR codes skipped: {identity['reason']}")
+            result["warnings"].append(identity["reason"])
+        for w in identity["warnings"]:
+            print(f"   ! {w}")
+    else:
+        result["qr"]["reason"] = "QR codes disabled"
+
+    # --- Fronts, per-card backs and interleaved duplex, from one slot plan ---
+    from .storage import load_decks_index
+    back_image = load_decks_index().get(deck_name, {}).get("back_image", "")
+    if not (back_image and os.path.exists(back_image)):
+        back_image = ""
+        print("No card back image -- using the generated default back design.")
+        print("   (Use --set-back DeckName --back-prompt '...' to generate one)")
+
+    print(f"\nGenerating print PDFs ({len(printable)} cards -> {total_pages} sheets, 2-sided)...")
+    written = create_duplex_pdfs(
+        printable, deck_name, sheet_size, color_mode, duplex_flip,
+        back_image_path=back_image or None, card_urls=urls, back_offset_mm=back_offset_mm,
+    )
+    pdf_path = written.get("fronts", "")
+    backs_path = written.get("backs", "")
+    duplex_path = written.get("duplex", "")
 
     # --- Generate companion booklet ---
     print("Generating companion booklet...")
     booklet_path = create_booklet_pdf(deck, deck_name)
 
-    # --- Generate backs PDF (if back image exists) ---
-    from .storage import load_decks_index
-    deck_meta = load_decks_index().get(deck_name, {})
-    back_image = deck_meta.get("back_image", "")
-    backs_path = ""
-    if back_image and os.path.exists(back_image):
-        print("Generating card backs PDF...")
-        backs_path = create_backs_pdf(
-            num_cards=len(printable),
-            deck_name=deck_name,
-            back_image_path=back_image,
-            sheet_size=sheet_size,
-            color_mode=color_mode,
-            duplex_flip=duplex_flip,
-        )
-    else:
-        print("No card back image found -- skipping backs PDF.")
-        print("   (Use --set-back DeckName --back-prompt '...' to generate one)")
-
     result.update(
         print_pdf=pdf_path or "",
         backs_pdf=backs_path or "",
+        duplex_pdf=duplex_path or "",
         booklet_pdf=booklet_path or "",
-        success=bool(pdf_path),
+        success=bool(pdf_path and duplex_path),
     )
-    if not pdf_path:
-        result["error"] = "Print PDF could not be generated (is reportlab installed?)"
+    if not result["success"]:
+        result["error"] = "Print PDFs could not be generated (are reportlab and Pillow installed?)"
 
-    if pdf_path:
+    if result["success"]:
         print(f"\n{'=' * 60}")
         print(f"FINALIZED: {deck_name}")
-        print(f"   Print PDF:  {pdf_path}")
-        if backs_path:
-            print(f"   Backs PDF:  {backs_path}")
+        print(f"   Duplex PDF: {duplex_path}  <- print this 2-sided, flip on "
+              f"{duplex_flip.replace('_', ' ')}, 100% scale")
+        print(f"   Fronts PDF: {pdf_path}")
+        print(f"   Backs PDF:  {backs_path}")
         if booklet_path:
             print(f"   Booklet:    {booklet_path}")
-        print(f"   Pages: {total_pages}")
+        print(f"   Sheets: {total_pages}")
         print(f"   Card trim: {CARD_TRIM_W}\" x {CARD_TRIM_H}\"")
         print(f"   Bleed: {BLEED}\" per side")
         print(f"   Color space: CMYK ({color_mode})")
@@ -1048,10 +920,13 @@ def finalize_deck(
     sheet_size: str = "letter",
     color_mode: str = "color",
     duplex_flip: str = "long_edge",
+    **kwargs,
 ) -> str:
     """Finalize a deck (see :func:`finalize_deck_report`).
 
-    Returns path to the print PDF, or "" on failure.
+    Returns path to the fronts print PDF, or "" on failure.
     Raises ``ValueError`` for unsupported sheet/color/duplex options.
     """
-    return finalize_deck_report(deck_name, sheet_size, color_mode, duplex_flip)["print_pdf"]
+    return finalize_deck_report(
+        deck_name, sheet_size, color_mode, duplex_flip, **kwargs,
+    )["print_pdf"]

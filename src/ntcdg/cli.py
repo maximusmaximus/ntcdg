@@ -206,6 +206,35 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
         choices=["color", "bw"],
         help="'color' or 'bw' (both output as CMYK)",
     )
+    fin.add_argument(
+        "--public-base-url", type=str, default=None,
+        help="Public site for card QR codes, e.g. https://tarot.example.com "
+             "(default: NTCDG_PUBLIC_BASE_URL). Baked into the deck on first finalize.",
+    )
+    fin.add_argument(
+        "--no-qr", action="store_true",
+        help="Do not print QR codes on card backs",
+    )
+    fin.add_argument(
+        "--rebase-url", action="store_true",
+        help="Allow changing a finalized deck's public URL (old printed codes keep the old URL)",
+    )
+    fin.add_argument(
+        "--back-offset-x-mm", type=float, default=0.0,
+        help="Shift backs right (+) / left (-) in mm to correct printer drift",
+    )
+    fin.add_argument(
+        "--back-offset-y-mm", type=float, default=0.0,
+        help="Shift backs up (+) / down (-) in mm to correct printer drift",
+    )
+    fin.add_argument(
+        "--calibration-sheet", action="store_true",
+        help="Write a 2-page duplex calibration PDF for --sheet-size/--duplex-flip",
+    )
+    fin.add_argument(
+        "--public-links", type=str, metavar="DECK", default=None,
+        help="Print the public deck URL and every card's QR URL",
+    )
 
     args = parser.parse_args()
 
@@ -457,14 +486,49 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             print(f"  Cards: {len(deck)}")
             print(f"  Traditional Symbols Represented: {len(hits)}/{len(all_canonical)} ({pct}%)\n")
 
+    elif args.calibration_sheet:
+        from .duplex import create_calibration_pdf
+        try:
+            path = create_calibration_pdf(
+                args.sheet_size, args.duplex_flip,
+                (args.back_offset_x_mm, args.back_offset_y_mm),
+            )
+        except ValueError as e:
+            parser.error(str(e))
+        print(f"\nCalibration sheet: {path}")
+        print(f"Print it 2-sided (flip on {args.duplex_flip.replace('_', ' ')}, 100% scale)"
+              " and hold it to a light; pass any shift as --back-offset-x-mm/--back-offset-y-mm.")
+
+    elif args.public_links:
+        from .public import public_links
+        from .storage import deck_exists
+        if not deck_exists(args.public_links):
+            parser.error(f"Deck '{args.public_links}' not found")
+        links = public_links(args.public_links)
+        if not links["enabled"]:
+            print(links["reason"])
+        else:
+            print(f"\nDeck page: {links['deck_url']}")
+            for card in links["cards"]:
+                print(f"  {card['position']:>3}  {card['title']:<28} {card['url']}")
+
     elif args.finalize:
-        from .finalize import finalize_deck
-        finalize_deck(
-            deck_name=args.finalize,
-            sheet_size=args.sheet_size,
-            color_mode=args.color_mode,
-            duplex_flip=args.duplex_flip,
-        )
+        from .finalize import finalize_deck_report
+        try:
+            report = finalize_deck_report(
+                args.finalize,
+                sheet_size=args.sheet_size,
+                color_mode=args.color_mode,
+                duplex_flip=args.duplex_flip,
+                qr_codes=not args.no_qr,
+                public_base_url=args.public_base_url,
+                rebase_url=args.rebase_url,
+                back_offset_mm=(args.back_offset_x_mm, args.back_offset_y_mm),
+            )
+        except ValueError as e:
+            parser.error(str(e))
+        if not report["success"]:
+            raise SystemExit(1)
 
     elif args.deck:
         from .generator import generate_deck
