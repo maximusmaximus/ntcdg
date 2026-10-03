@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tool_form %}
+{% block title %}Workbench — NTCDG{% endblock %}
+{% block content %}
+<h1>Workbench</h1>
+<p class="lead">Every NTCDG tool, with a form generated from its own signature and documentation. Each run shows the
+  exact <strong>input</strong> sent and the <strong>output</strong> returned; long tools run as background jobs with a live log.</p>
+{% if not has_key %}<div class="flash warn">Tools marked <span class="badge key">uses Venice</span> need your own Venice API key — <a href="/profile#venice-key">add it on your profile</a>.</div>{% endif %}
+
+<datalist id="decklist">{% for d in decks %}<option value="{{ d }}">{% endfor %}</datalist>
+
+<div class="workbench">
+  <aside class="wb-index" aria-label="Tools">
+    {% for category, specs in groups %}
+      <h3>{{ category }}</h3>
+      <ul>{% for s in specs %}<li><a href="#tool-{{ s.name }}">{{ s.name }}</a></li>{% endfor %}</ul>
+    {% endfor %}
+    {% if excluded %}
+      <h3>Not available on the web</h3>
+      <ul>{% for name, why in excluded.items() %}<li title="{{ why }}">{{ name }}</li>{% endfor %}</ul>
+    {% endif %}
+  </aside>
+
+  <div class="wb-tools">
+    <section class="card-panel uploads-panel" id="uploads">
+      <h2>Your uploads</h2>
+      <p class="muted">Path inputs only accept your own uploads (images are checked; max size applies). Reference them as <code>upload:&lt;id&gt;</code>.</p>
+      <form class="upload-form" data-kind="image">
+        <label>Images (PNG/JPEG/WebP/GIF/BMP) <input type="file" name="file" accept="image/*" multiple required></label>
+        <button class="btn small" type="submit">Upload images</button>
+      </form>
+      <form class="upload-form" data-kind="symbols_json">
+        <label>symbols.json <input type="file" name="file" accept="application/json,.json" required></label>
+        <button class="btn small" type="submit">Upload symbols.json</button>
+      </form>
+      <ul class="upload-list" data-upload-list>
+        {% for u in uploads %}<li data-id="{{ u.id }}"><img src="/uploads/{{ u.id }}" alt="" loading="lazy"><code>upload:{{ u.id }}</code> <span>{{ u.original_name }}</span></li>{% endfor %}
+        {% for u in json_uploads %}<li data-id="{{ u.id }}"><code>upload:{{ u.id }}</code> <span>{{ u.original_name }} (symbols.json)</span></li>{% endfor %}
+      </ul>
+    </section>
+
+    {% for category, specs in groups %}
+      <h2 class="cat">{{ category }}</h2>
+      {% for spec in specs %}
+        <details class="tool card-panel" id="tool-{{ spec.name }}">
+          <summary><code>{{ spec.name }}</code> <span class="muted">— {{ spec.summary }}</span></summary>
+          {% if spec.doc and spec.doc != spec.summary %}<pre class="doc">{{ spec.doc }}</pre>{% endif %}
+          {% if spec.note %}<p class="note">Web: {{ spec.note }}</p>{% endif %}
+          {{ tool_form(spec, decks, uploads, json_uploads, manifests) }}
+        </details>
+      {% endfor %}
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

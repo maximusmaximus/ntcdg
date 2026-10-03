@@ -415,6 +415,27 @@ def finalize_deck(
 
     Returns success, the exact output files, QR/public URL info and validation errors/warnings.
     """
+    return _finalize_impl(
+        deck_name, sheet_size=sheet_size, color_mode=color_mode, duplex_flip=duplex_flip,
+        qr_codes=qr_codes, public_base_url=public_base_url, rebase_url=rebase_url,
+        back_offset_x_mm=back_offset_x_mm, back_offset_y_mm=back_offset_y_mm,
+    )
+
+
+def _finalize_impl(
+    deck_name: str,
+    *,
+    sheet_size: str = "letter",
+    color_mode: str = "color",
+    duplex_flip: str = "long_edge",
+    qr_codes: bool = True,
+    public_base_url: str = "",
+    rebase_url: bool = False,
+    back_offset_x_mm: float = 0.0,
+    back_offset_y_mm: float = 0.0,
+    allow_local_url: bool = False,
+) -> dict[str, Any]:
+    """Shared body of :func:`finalize_deck` (also used by the web app)."""
     from .finalize import finalize_deck_report
 
     try:
@@ -427,6 +448,7 @@ def finalize_deck(
             qr_codes=qr_codes,
             public_base_url=public_base_url or None,
             rebase_url=rebase_url,
+            allow_local_url=allow_local_url,
             back_offset_mm=(back_offset_x_mm, back_offset_y_mm),
         )
     except ValueError as e:
@@ -1442,10 +1464,15 @@ def preview_style(
         generate_card,
     )
     from .overlay import get_card_number_text, overlay_card_text
+    from .storage import preview_raw_dir, validate_deck_name
     from .style import extract_deck_style, refine_card_prompt
     from .symbols import load_symbols_config
     from .venice import generate_image_with_venice
 
+    try:
+        validate_deck_name(name)
+    except ValueError as e:
+        return {"error": str(e), "previews": []}
     venice_key = _get_venice_key()
     symbols_config = load_symbols_config(symbols_file or None)
 
@@ -1498,6 +1525,7 @@ def preview_style(
             rate_limit_delay=1.5,
             symbol_mode=symbol_mode,
             symbol_images=symbol_images,
+            output_dir=preview_raw_dir(name),
         )
         card.update(result)
 
@@ -1548,7 +1576,7 @@ def generate_single_card(
     """
     from .generator import build_card_prompt
     from .overlay import get_card_number_text, overlay_card_text
-    from .storage import load_deck, load_decks_index, save_deck
+    from .storage import deck_images_dir, load_deck, load_decks_index, save_deck
     from .style import refine_card_prompt
     from .symbols import load_symbols_config
     from .venice import analyze_with_venice, generate_image_with_venice
@@ -1595,6 +1623,7 @@ def generate_single_card(
         image_size=Config.DEFAULT_IMAGE_SIZE,
         rate_limit_delay=1.5,
         symbol_images=symbol_images,
+        output_dir=deck_images_dir(deck_name),
     )
     card.update(img_result)
 

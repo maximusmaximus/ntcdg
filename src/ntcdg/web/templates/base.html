@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#14112b">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>{% block title %}NTCDG — Novel Tarot Card Deck Generator{% endblock %}</title>
+  <meta name="description" content="{% block description %}Create a one-of-a-kind tarot deck, made to be given away — each card is for one person alone.{% endblock %}">
+  {% block meta %}{% endblock %}
+  <link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip" href="#main">Skip to content</a>
+  {% block header %}
+  <header class="site-header">
+    <a class="brand" href="/"><img src="/static/logo.svg" alt="" width="28" height="28"><span>NTCDG</span></a>
+    <nav class="nav" aria-label="Main">
+      <a href="/about">Philosophy</a>
+      {% if user %}
+        <a href="/dashboard">My decks</a>
+        <a href="/decks/new">New deck</a>
+        <a href="/workbench">Workbench</a>
+        <a href="/jobs">Jobs</a>
+        <a href="/profile">{{ user.display_name or user.username }}</a>
+        <form method="post" action="/logout" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button class="linklike" type="submit">Log out</button>
+        </form>
+      {% else %}
+        <a href="/login">Log in</a>
+        <a class="btn small" href="/signup">Create profile</a>
+      {% endif %}
+    </nav>
+  </header>
+  {% endblock %}
+  <main id="main" class="{% block main_class %}container{% endblock %}">
+    {% for category, message in flashes %}
+      <div class="flash {{ category }}" role="status">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block footer %}
+  <footer class="site-footer">
+    <p>NTCDG decks are made to be given away. Each card's energy belongs to the person who receives it.</p>
+    <p class="muted">Art &amp; text generated with <a href="https://venice.ai" rel="noopener">Venice.ai</a> using each artist's own key.</p>
+  </footer>
+  {% endblock %}
+  <script src="/static/app.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} — NTCDG{% endblock %}
+{% block content %}
+<section class="narrow card-panel center">
+  <h1>{{ status }}</h1>
+  <p>{{ message }}</p>
+  <p><a class="btn ghost" href="/">Home</a></p>
+</section>
+{% endblock %}

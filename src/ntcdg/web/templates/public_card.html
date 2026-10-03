@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ card.title }} · {{ card.deck_title }}{% endblock %}
+{% block description %}{{ (card.upright_interpretation or card.description or philosophy) | truncate(180) }}{% endblock %}
+{% block meta %}
+  {% if card.canonical_url %}<link rel="canonical" href="{{ card.canonical_url }}">{% endif %}
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="{{ card.title }} — {{ card.deck_title }}">
+  <meta property="og:description" content="{{ philosophy }}">
+  {% if card.canonical_url %}<meta property="og:url" content="{{ card.canonical_url }}">{% endif %}
+  {% if card.og_image_url %}<meta property="og:image" content="{{ card.og_image_url }}">{% endif %}
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="robots" content="noindex">
+  {% if card.prev_url %}<link rel="prev" href="{{ card.prev_url }}">{% endif %}
+  {% if card.next_url %}<link rel="next" href="{{ card.next_url }}">{% endif %}
+{% endblock %}
+{% block body_class %}public{% endblock %}
+{% block header %}
+<header class="public-header">
+  <a class="deck-link" href="{{ card.deck_url }}" data-field="deck_link">
+    <img src="/static/logo.svg" alt="" width="22" height="22"> <span>{{ card.deck_title }}</span></a>
+  <span class="counter" data-field="counter">{{ card.position }} / {{ card.total }}</span>
+</header>
+{% endblock %}
+{% block main_class %}viewer-main{% endblock %}
+{% block content %}
+<article class="viewer" data-viewer data-deck-slug="{{ deck_slug }}" data-on-subdomain="{{ '1' if on_subdomain else '0' }}"
+         data-card-slug="{{ card.card_slug }}" data-prev-slug="{{ card.prev_card_slug or '' }}"
+         data-next-slug="{{ card.next_card_slug or '' }}">
+  <figure class="viewer-art">
+    <img data-field="image" {% if card.image_url %}src="{{ card.image_url }}"{% else %}hidden{% endif %}
+         alt="{{ card.title }}" width="550" height="950" decoding="async">
+    <div class="card-art placeholder" data-field="noimage" {% if card.image_url %}hidden{% endif %}>✶</div>
+  </figure>
+
+  <header class="viewer-title">
+    <h1 data-field="title">{{ card.title }}</h1>
+    <p class="chips">
+      <span data-field="arcana" {% if not card.arcana %}hidden{% endif %}>{{ card.arcana }}</span>
+      <span data-field="suit" {% if not card.suit %}hidden{% endif %}>{{ card.suit or "" }}</span>
+      <span data-field="original_title" {% if not card.original_title or card.original_title == card.title %}hidden{% endif %}>traditionally {{ card.original_title }}</span>
+    </p>
+  </header>
+
+  <p class="philosophy">{{ philosophy }}</p>
+
+  <div class="sections">
+    <details class="section" open data-section="upright" {% if not card.upright_interpretation %}hidden{% endif %}>
+      <summary>Upright</summary>
+      <p data-field="upright_interpretation">{{ card.upright_interpretation }}</p>
+    </details>
+    <details class="section" open data-section="reversed" {% if not card.reversed_interpretation %}hidden{% endif %}>
+      <summary>Reversed</summary>
+      <p data-field="reversed_interpretation">{{ card.reversed_interpretation }}</p>
+    </details>
+    <details class="section" open data-section="description" {% if not card.description %}hidden{% endif %}>
+      <summary>What the card shows</summary>
+      <p data-field="description">{{ card.description }}</p>
+    </details>
+    <details class="section" open data-section="symbols" {% if not card.symbols %}hidden{% endif %}>
+      <summary>Symbols</summary>
+      <ul class="chips" data-field="symbols">
+        {% if card.symbols is string %}<li>{{ card.symbols }}</li>
+        {% elif card.symbols %}{% for s in card.symbols %}<li>{{ s }}</li>{% endfor %}{% endif %}
+      </ul>
+    </details>
+  </div>
+
+  <nav class="viewer-nav" aria-label="Other cards in this deck">
+    <a class="btn ghost" data-field="prev" href="{{ card.prev_url or card.next_url }}" rel="prev">← <span class="sr">Previous card</span></a>
+    <a class="btn ghost small" href="{{ card.deck_url }}">All cards</a>
+    <a class="btn ghost" data-field="next" href="{{ card.next_url }}" rel="next"><span class="sr">Next card</span> →</a>
+  </nav>
+  <p class="swipe-hint muted">Swipe or use ← → to move through the deck.</p>
+  {% include "_scanner.html" %}
+</article>
+{% endblock %}
+{% block footer %}
+<footer class="site-footer public">
+  <p>Made with <a href="/about">NTCDG</a> — tarot decks made to be given away.</p>
+</footer>
+{% endblock %}
+{% block scripts %}
+<script src="/static/viewer.js" defer></script>
+<script src="/static/scanner.js" defer></script>
+{% endblock %}

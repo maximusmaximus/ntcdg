@@ -9,7 +9,14 @@ from typing import Any
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
 from .overlay import compose_card, get_card_number_text
-from .storage import load_deck, save_deck, update_deck_index, update_deck_meta
+from .storage import (
+    deck_images_dir,
+    load_deck,
+    preview_raw_dir,
+    save_deck,
+    update_deck_index,
+    update_deck_meta,
+)
 from .style import extract_deck_style, refine_card_prompt
 from .symbols import generate_symbol_images, load_symbols_config
 from .usage import UsageTracker
@@ -392,6 +399,7 @@ def interactive_review(
                 rate_limit_delay=rate_limit,
                 symbol_mode="generate",
                 symbol_images={},
+                output_dir=deck_images_dir(deck_name),
             )
             card.update(result)
             if card.image_path:
@@ -499,6 +507,7 @@ def preview_deck_style(
             rate_limit_delay=rate_limit,
             symbol_mode=symbol_mode,
             symbol_images=symbol_images or {},
+            output_dir=preview_raw_dir(deck_name),
         )
         card.update(result)
 
@@ -595,6 +604,10 @@ def generate_deck(
     can show each step's inputs and outputs as they happen. Exceptions raised
     by the callback are logged and never abort generation.
     """
+    if on_event is None:
+        from .runtime import current_event_sink
+        on_event = current_event_sink()
+
     def emit(event_type: str, **payload: Any) -> None:
         if on_event is None:
             return
@@ -604,6 +617,9 @@ def generate_deck(
             logger.warning(f"on_event callback failed: {e}")
 
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
+    # Each deck's card art lives in its own folder; card file names are only
+    # unique within a deck, so a shared folder let decks overwrite each other.
+    card_images_dir = deck_images_dir(name)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
 
     # --- Initialize usage tracker ---
@@ -853,6 +869,7 @@ def generate_deck(
                 symbol_mode=symbol_mode,
                 symbol_images=symbol_images,
                 tracker=tracker,
+                output_dir=card_images_dir,
             )
             card.update(result)
             if card.image_path:

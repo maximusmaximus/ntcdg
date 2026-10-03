@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Philosophy — NTCDG{% endblock %}
+{% block content %}
+<article class="prose">
+  <p class="eyebrow">About NTCDG</p>
+  <h1>Decks made to be given away</h1>
+
+  <p class="lead">
+    NTCDG — the Novel Tarot Card Deck Generator — exists for one purpose: to help you make a tarot deck
+    that has never existed before, and then to give its cards away, one by one, to the people they are for.
+  </p>
+
+  <h2>Each card belongs to one person</h2>
+  <p>
+    An NTCDG deck is not a fortune-telling kit for the maker. Each card is created for, and handed to,
+    a particular person. The energy of each card is just for that person — it is theirs alone. It is not
+    meant to be read by the maker as a fortune for others, and it is not a verdict handed down from
+    above. It is a gift.
+  </p>
+  <p>
+    As the maker, you are a channel and a gift-giver. You shape the deck, you choose its symbols and its
+    mood, and then you let each card go. Who receives which card is part of the magic: the card finds
+    its person, and what it means is between the card and them.
+  </p>
+
+  <h2>A private page behind every card</h2>
+  <p>
+    Every printed card carries a small QR code on its back. When the person you gave it to scans it,
+    their phone opens that card's own page: the card's image, its title and arcana, the symbols woven
+    into it, a description, and its upright and reversed meanings. They can read it privately, in their
+    own time — tonight, next year, whenever the card asks to be understood. They can swipe through the rest
+    of the deck, or scan another card if someone else shares theirs.
+  </p>
+  <p>
+    The link is permanent. The deck's web address is baked in the first time it is printed, so cards
+    already given away keep working even when you reprint.
+  </p>
+
+  <h2>The structure of tarot</h2>
+  <p>A traditional deck has <strong>78 cards</strong> in two parts:</p>
+  <ul>
+    <li><strong>The Major Arcana</strong> — 22 cards, from <em>0 The Fool</em> to <em>XXI The World</em>: the great
+      archetypes and turning points of a life's journey.</li>
+    <li><strong>The Minor Arcana</strong> — 56 cards in four suits: <em>Wands</em> (fire, will, creativity),
+      <em>Cups</em> (water, feeling, love), <em>Swords</em> (air, thought, truth) and <em>Pentacles</em>
+      (earth, body, work and resources). Each suit runs Ace to Ten, plus four court cards: Page, Knight,
+      Queen and King.</li>
+  </ul>
+  <p>
+    Every card has an <strong>upright</strong> meaning and a <strong>reversed</strong> meaning — the same
+    energy turned inward, blocked, or asking for attention. NTCDG writes both for every card, so whoever
+    receives it can read whichever way it came to them.
+  </p>
+
+  <h2>Your symbols, your style</h2>
+  <p>
+    Tarot speaks through symbols: the Fool's small dog and cliff edge, the Star's water pitchers, the
+    Moon's twin towers. NTCDG knows the canonical, traditional symbols of every card. Artists can draw
+    their own versions of these symbols and upload them; NTCDG matches them to the traditional archetypes,
+    tells you which ones are still missing, and generates the rest of the deck <em>in your style</em>.
+    Or let it generate a cohesive set of symbols for you.
+  </p>
+
+  <h2>AI as an assistant to the artist</h2>
+  <p>
+    The art and text are created with <a href="https://venice.ai" rel="noopener">Venice.ai</a>, a
+    privacy-focused AI platform, using <strong>your own Venice API key</strong> (stored encrypted on your profile;
+    it is never shared, and nobody else's key is ever used for your decks). The AI helps the artist — it does
+    not replace them. You choose the vision, the symbols, the words you keep and the cards you give.
+    Everything is transparent: you can see every prompt sent and every result returned as your deck is made.
+  </p>
+
+  <h2>Printing</h2>
+  <p>
+    When your deck is ready, NTCDG produces print-ready PDFs at the true 2.75″ × 4.75″ tarot size with bleed,
+    in CMYK, laid out so that every back lines up exactly with its front when printed double-sided.
+    A calibration sheet helps you correct any drift your printer has. A companion booklet holds every
+    card's meanings.
+  </p>
+
+  <div class="actions">
+    {% if user %}<a class="btn" href="/decks/new">Begin a deck</a>{% else %}<a class="btn" href="/signup">Create your profile</a>{% endif %}
+  </div>
+</article>
+{% endblock %}

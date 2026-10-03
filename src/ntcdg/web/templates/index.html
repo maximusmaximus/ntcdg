@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="hero-text">
+    <p class="eyebrow">Novel Tarot Card Deck Generator</p>
+    <h1>Make a tarot deck that exists nowhere else — <span class="gold">and give it away.</span></h1>
+    <p class="lead">
+      NTCDG helps artists create a complete, one-of-a-kind tarot deck: original art for every card,
+      a written meaning for each one, and print-ready sheets with a QR code on every back.
+    </p>
+    <p class="lead">
+      These decks are made to be given. Each card is created for, and handed to, one particular
+      person. Its energy is <em>just for them</em> — when they scan the back, they read what their card
+      holds, privately, in their own time.
+    </p>
+    <div class="actions">
+      {% if user %}
+        <a class="btn" href="/decks/new">Start a new deck</a>
+        <a class="btn ghost" href="/dashboard">My decks</a>
+      {% else %}
+        <a class="btn" href="/signup">Create your profile</a>
+        <a class="btn ghost" href="/about">Read the philosophy</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="hero-art" aria-hidden="true">
+    <div class="tarot-fan">
+      <div class="tcard c1"><span>0</span><b>The Fool</b></div>
+      <div class="tcard c2"><span>XVII</span><b>The Star</b></div>
+      <div class="tcard c3"><span>XIX</span><b>The Sun</b></div>
+    </div>
+  </div>
+</section>
+
+<section class="steps">
+  <h2>How it works</h2>
+  <ol class="step-grid">
+    <li><h3>1 · Dream it</h3><p>Describe a vibe and theme. Choose a full 78-card deck, the 22 Major Arcana, or a custom size.</p></li>
+    <li><h3>2 · Bring your symbols</h3><p>Upload your own drawings of traditional symbols. The rest of the deck is generated in your style.</p></li>
+    <li><h3>3 · Watch it appear</h3><p>See every prompt, every meaning and every image as it is created — nothing is hidden.</p></li>
+    <li><h3>4 · Print &amp; give</h3><p>Duplex-registered sheets with a personal QR on each back. Cut, shuffle, and hand each card to its person.</p></li>
+  </ol>
+</section>
+
+<section class="callout">
+  <h2>Scanned a card?</h2>
+  <p>The QR code on the back of your card opens its own page: the card's image and everything it represents,
+    from its symbols to its upright and reversed meanings. Swipe to wander through the rest of the deck,
+    or scan another card.</p>
+</section>
+{% endblock %}

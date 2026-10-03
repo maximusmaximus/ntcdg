@@ -173,8 +173,13 @@ def generate_image_with_venice(
     symbol_mode: str = "generate",
     symbol_images: dict[str, str] = None,
     tracker=None,
+    output_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Generate a card image via Venice. Returns a dict of result fields."""
+    """Generate a card image via Venice. Returns a dict of result fields.
+
+    ``output_dir`` -- where to save the image (default ``Config.IMAGES_DIR``);
+    pass the deck's own folder so decks never overwrite each other's files.
+    """
     if not api_key:
         return {"image_error": "Venice API key not provided"}
     if not requests:
@@ -182,6 +187,8 @@ def generate_image_with_venice(
 
     time.sleep(rate_limit_delay)
 
+    images_dir = output_dir or Config.IMAGES_DIR
+    os.makedirs(images_dir, exist_ok=True)
     full_prompt = card.prompt
     neg_prompt = negative_prompt or Config.DEFAULT_NEGATIVE_PROMPT
 
@@ -204,7 +211,7 @@ def generate_image_with_venice(
                 img_data = base64.b64decode(b64)
                 safe_title = str(card.title).replace(" ", "_")[:40]
                 filename = f"{card.position:03d}_{safe_title}.png"
-                filepath = os.path.join(Config.IMAGES_DIR, filename)
+                filepath = os.path.join(images_dir, filename)
                 with open(filepath, "wb") as f:
                     f.write(img_data)
                     if tracker:
@@ -235,7 +242,7 @@ def generate_image_with_venice(
             if not b64:
                 return {"image_error": "No base image data"}
 
-            temp_path = os.path.join(Config.IMAGES_DIR, f"temp_{card.position}.png")
+            temp_path = os.path.join(images_dir, f"temp_{card.position}.png")
             with open(temp_path, "wb") as f:
                 f.write(base64.b64decode(b64))
 
@@ -271,8 +278,8 @@ def generate_image_with_venice(
                     }
 
             # Fallback to base if no edits applied
-            final_path = temp_path.replace("temp_", "")
-            os.rename(temp_path, final_path)
+            final_path = os.path.join(images_dir, os.path.basename(temp_path)[len("temp_"):])
+            os.replace(temp_path, final_path)
             return {
                 "image_path": final_path,
                 "image_model": model,

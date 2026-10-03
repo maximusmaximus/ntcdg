@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_macros.html" import tool_form %}
+{% set dk = {"deck_name": deck} %}
+{% block title %}Print &amp; share {{ deck }} — NTCDG{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/dashboard">My decks</a> › <a href="/decks/{{ deck }}">{{ deck }}</a> › <span>Print &amp; share</span></nav>
+<h1>Print &amp; share</h1>
+<p class="lead">Finalizing builds print-ready PDFs. With QR codes on, every card back carries a code that opens
+  <em>that card's</em> page — so whoever you give it to can scan it and read what it holds for them.</p>
+
+{% if public_cfg.error %}
+<div class="flash warn"><strong>Public links are not configured on this server.</strong> {{ public_cfg.error }}
+  The administrator must set <code>NTCDG_PUBLIC_BASE_URL</code> (e.g. <code>https://tarot.example.com</code>)
+  before QR codes can be printed. You can still finalize without QR codes.</div>
+{% elif public_cfg.base_url %}
+<p class="muted">QR codes will point to <code>{{ public_cfg.base_url }}</code>{% if public_cfg.mode == "subdomain" %} (each deck on its own subdomain){% endif %}.</p>
+{% endif %}
+
+{% if not summary.ready_to_finalize %}
+<div class="flash warn">This deck is not complete yet ({{ summary.images }}/{{ summary.total_cards }} images,
+  {{ summary.analysis }}/{{ summary.total_cards }} analysed). You can still finalize, but missing cards will be skipped or blank.</div>
+{% endif %}
+
+<div class="split">
+  <section class="card-panel">
+    <h2>1 · Calibrate your printer <span class="muted">(once)</span></h2>
+    <p>Duplex printers shift the back side slightly. Print this one-page sheet double-sided, measure the offset of the
+      crosshairs, and enter it below as <code>back_offset_x_mm</code> / <code>back_offset_y_mm</code>.</p>
+    {{ tool_form(TOOLS["duplex_calibration"], decks, uploads, json_uploads, manifests, label="Make calibration sheet") }}
+  </section>
+  <section class="card-panel">
+    <h2>2 · Finalize</h2>
+    <p>Creates the duplex PDF (fronts and backs interleaved), separate front/back sheets, a booklet of meanings and
+      the master files. Card trim is 2.75 × 4.75 in with 0.125 in bleed.</p>
+    {{ tool_form(TOOLS["finalize_deck"], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], label="Finalize deck") }}
+  </section>
+</div>
+
+<section class="card-panel">
+  <h2>Files</h2>
+  {% if artifacts %}
+  <table class="table">
+    <thead><tr><th>File</th><th>Type</th><th>Size</th></tr></thead>
+    <tbody>
+    {% for a in artifacts %}
+      <tr><td><a href="{{ a.url }}" download>{{ a.name }}</a></td><td>{{ a.kind }}</td><td>{{ a.size_kb }} KB</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Nothing yet — finalize the deck to create its PDFs.</p>
+  {% endif %}
+  <details class="sub"><summary>Export a bundle (zip of everything)</summary>
+    {{ tool_form(TOOLS["export_bundle"], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], compact=True) }}
+  </details>
+</section>
+
+<section class="card-panel">
+  <h2>Public pages &amp; QR codes</h2>
+  {% if links.enabled %}
+  <p>Deck page: <a href="{{ links.deck_url }}" target="_blank" rel="noopener">{{ links.deck_url }}</a></p>
+  <ul class="qr-grid">
+    {% for c in links.cards %}
+    <li>
+      <img src="/decks/{{ deck }}/qr/{{ c.position }}.svg" alt="QR code for card {{ c.position }}" width="96" height="96" loading="lazy">
+      <span class="t"><span class="pos">{{ c.position }}</span> {{ c.title }}</span>
+      <a href="{{ c.url }}" target="_blank" rel="noopener" class="small">{{ c.url }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">{{ links.reason or "Finalize with QR codes on to publish this deck." }}</p>
+  {% endif %}
+  <details class="sub"><summary><code>get_public_links</code> as JSON</summary>
+    {{ tool_form(TOOLS["get_public_links"], decks, uploads, json_uploads, manifests, preset=dk, hide=["deck_name"], compact=True) }}
+  </details>
+</section>
+{% endblock %}
