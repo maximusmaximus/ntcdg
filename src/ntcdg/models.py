@@ -1,5 +1,7 @@
 """Card data model for NTCDG."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from dataclasses import fields as dataclass_fields
 from typing import Any
@@ -59,7 +61,7 @@ class Card:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Card":
+    def from_dict(cls, data: dict[str, Any]) -> Card:
         """Create a Card from a dict, mapping keys and ignoring unknowns."""
         valid_fields = {f.name for f in dataclass_fields(cls)}
         mapped = {}

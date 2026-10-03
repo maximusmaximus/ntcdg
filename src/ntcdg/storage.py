@@ -9,17 +9,24 @@ from .config import Config, logger, pd
 from .models import Card
 
 
+def _get_decks_index_file() -> str:
+    base = os.path.basename(Config.DECKS_INDEX_FILE) or "decks_index.json"
+    return os.path.join(Config.OUTPUT_DIR, base)
+
+
 # ==================== DECK INDEX ====================
 def load_decks_index() -> dict[str, Any]:
-    if os.path.exists(Config.DECKS_INDEX_FILE):
-        with open(Config.DECKS_INDEX_FILE) as f:
+    index_file = _get_decks_index_file()
+    if os.path.exists(index_file):
+        with open(index_file) as f:
             return json.load(f)
     return {}
 
 
 def save_decks_index(index: dict[str, Any]):
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-    with open(Config.DECKS_INDEX_FILE, "w") as f:
+    index_file = _get_decks_index_file()
+    os.makedirs(os.path.dirname(index_file) or ".", exist_ok=True)
+    with open(index_file, "w") as f:
         json.dump(index, f, indent=2)
 
 

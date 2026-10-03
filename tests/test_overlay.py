@@ -95,3 +95,27 @@ class TestOverlayCardText:
     def test_overlay_nonexistent_image(self, tmp_path):
         result = overlay_card_text("/nonexistent/path.png", "Test", "I")
         assert result == "/nonexistent/path.png"  # Returns path unchanged
+
+
+class TestComposeCard:
+    """Test full tarot card composition with frame and safe zones."""
+
+    def test_compose_card_creates_tarot_ratio_image(self, tmp_path):
+        from ntcdg.overlay import compose_card
+
+        img = Image.new("RGB", (600, 900), color=(180, 100, 50))
+        img_path = str(tmp_path / "art.png")
+        img.save(img_path)
+
+        compose_card(
+            image_path=img_path,
+            title="The Magician",
+            card_number="I",
+            card_type="Major Arcana",
+            canvas_size=(768, 1280),
+        )
+
+        composed = Image.open(img_path)
+        assert composed.size == (768, 1280)
+        # Verify 3:5 aspect ratio
+        assert composed.size[0] / composed.size[1] == 0.60
