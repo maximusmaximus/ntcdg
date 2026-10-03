@@ -93,7 +93,7 @@ def _find_font(font_path: str | None = None, size: int = 40):
 
 
 def _draw_text_with_shadow(
-    draw: "ImageDraw.Draw",
+    draw: ImageDraw.Draw,
     text: str,
     position: tuple,
     font,
@@ -279,7 +279,7 @@ def compose_card(
     draw = ImageDraw.Draw(canvas)
 
     # Bleed calculation (0.125" bleed per side on 3.0" card = ~4.17% of width)
-    bleed_px = int(round(canvas_w * (0.125 / 3.0)))  # 32px on 768w canvas
+    bleed_px = round(canvas_w * (0.125 / 3.0))  # 32px on 768w canvas
 
     # Outer frame is drawn inside the safe area (16px inside the trim cut line)
     frame_margin = bleed_px + 16

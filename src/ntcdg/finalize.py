@@ -266,11 +266,11 @@ def _prepare_image(
         current_aspect = w / h
         if abs(current_aspect - target_aspect) > 0.005:
             if current_aspect > target_aspect:
-                new_w = int(round(h * target_aspect))
+                new_w = round(h * target_aspect)
                 offset = (w - new_w) // 2
                 img = img.crop((offset, 0, offset + new_w, h))
             else:
-                new_h = int(round(w / target_aspect))
+                new_h = round(w / target_aspect)
                 offset = (h - new_h) // 2
                 img = img.crop((0, offset, w, offset + new_h))
 
@@ -779,7 +779,7 @@ def _bk_write_card_entry(c, y: float, card) -> float:
 
 
 # ==================== BOOKLET PDF ====================
-def create_booklet_pdf(deck: list["Card"], deck_name: str) -> str:
+def create_booklet_pdf(deck: list[Card], deck_name: str) -> str:
     """
     Create a pocket-sized companion booklet (same size as a tarot card).
 
