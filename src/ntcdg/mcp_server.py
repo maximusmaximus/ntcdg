@@ -10,10 +10,8 @@ Run with:
 Requires: pip install "mcp[cli]"
 """
 
-import io
 import os
 import sys
-from contextlib import redirect_stdout
 from typing import Any
 
 # Defer MCP import — allow module to load without mcp installed
@@ -26,6 +24,7 @@ except ImportError:
     FastMCP = None
 
 from .config import Config, setup_logging
+from .runtime import capture_output, get_venice_key
 from .venice import _extract_text_content
 
 setup_logging()
@@ -55,23 +54,21 @@ else:
 
 # ==================== HELPERS ====================
 
+MAX_CARDS = 200
+
+
 def _capture_print(func, *args, **kwargs) -> str:
-    """Call a function that prints to stdout and capture the output."""
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        func(*args, **kwargs)
-    return buf.getvalue().strip()
+    """Call a function that prints to stdout and capture the output.
+
+    Uses per-thread capture so concurrent tool calls don't interleave.
+    """
+    _result, output = capture_output(func, *args, **kwargs)
+    return output
 
 
 def _get_venice_key() -> str:
-    """Get Venice API key from environment."""
-    key = os.getenv("VENICE_API_KEY", "")
-    if not key:
-        raise ValueError(
-            "VENICE_API_KEY environment variable is not set. "
-            "Set it before running the MCP server."
-        )
-    return key
+    """Get the Venice API key bound to this request, else from the environment."""
+    return get_venice_key(required=True)
 
 
 def _deck_summary(deck_name: str) -> dict[str, Any]:
@@ -129,13 +126,13 @@ def create_deck(
     image_size: str = "",
     traditional_mode: bool = True,
     auto_complete_symbols: bool = False,
-    sheet_size: str = "letter",
+    overwrite: bool = False,
 ) -> dict[str, Any]:
     """Create a new tarot card deck with AI-generated art and meanings.
 
     Args:
-        name: Deck name (letters, numbers, underscores, hyphens)
-        cards: Number of cards (22 for Major Arcana only, 78 for full)
+        name: Deck name (letters, numbers, underscores, hyphens; max 100 chars)
+        cards: Number of cards, 1-200 (22 for Major Arcana only, 78 for full)
         vibe: Artistic style/aesthetic (e.g., "cosmic horror meets art nouveau")
         deck_prompt: Additional theme instructions
         symbol_mode: "generate" (AI creates) or "provide" (user artwork)
@@ -143,16 +140,40 @@ def create_deck(
         image_size: Image dimensions (default: 768x1280 for 3:5 tarot bleed)
         traditional_mode: If True, cards use authentic canonical tarot symbols
         auto_complete_symbols: If True, AI completes missing traditional symbols in artist style
-        sheet_size: Print sheet size ("letter", "tabloid", "a4", "a3")
+        overwrite: If True, replace an existing deck with the same name
     """
     from .generator import generate_deck
+    from .storage import deck_exists, validate_deck_name
+
+    try:
+        validate_deck_name(name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if not 1 <= int(cards) <= MAX_CARDS:
+        return {"success": False, "error": f"cards must be between 1 and {MAX_CARDS}"}
+    if symbol_mode not in ("generate", "provide"):
+        return {"success": False, "error": "symbol_mode must be 'generate' or 'provide'"}
+    if symbols_file and not os.path.isfile(symbols_file):
+        return {"success": False, "error": f"symbols_file not found: {symbols_file}"}
+    if deck_exists(name) and not overwrite:
+        return {
+            "success": False,
+            "error": (
+                f"Deck '{name}' already exists. Use retry_failed to resume it, "
+                "or pass overwrite=True to replace it."
+            ),
+        }
 
     venice_key = _get_venice_key()
     size = image_size or Config.DEFAULT_IMAGE_SIZE
 
+    if overwrite and deck_exists(name):
+        from .storage import delete_deck as _delete
+        _capture_print(_delete, name, confirm=False)
+
     generate_deck(
         name=name,
-        num_cards=cards,
+        num_cards=int(cards),
         vibe=vibe,
         deck_prompt=deck_prompt,
         venice_key=venice_key,
@@ -169,7 +190,6 @@ def create_deck(
         preview=False,       # No interactive preview
         traditional_mode=traditional_mode,
         auto_complete_symbols=auto_complete_symbols,
-        sheet_size=sheet_size,
     )
 
     return _deck_summary(name)
@@ -291,16 +311,23 @@ def retry_failed(deck_name: str) -> dict[str, Any]:
     had errors. Already-complete cards are skipped.
     """
     from .generator import generate_deck
-    from .storage import load_decks_index
+    from .storage import deck_exists, load_deck, load_decks_index
+
+    if not deck_exists(deck_name):
+        return {
+            "success": False,
+            "error": f"Deck '{deck_name}' not found. Use create_deck to start a new deck.",
+        }
 
     venice_key = _get_venice_key()
 
     index = load_decks_index()
     meta = index.get(deck_name, {})
+    target = meta.get("target_cards") or meta.get("num_cards") or len(load_deck(deck_name))
 
     generate_deck(
         name=deck_name,
-        num_cards=meta.get("num_cards", 78),
+        num_cards=int(target),
         vibe=meta.get("vibe"),
         deck_prompt=meta.get("theme", ""),
         venice_key=venice_key,
@@ -330,8 +357,13 @@ def generate_back(
         deck_name: Name of the deck
         prompt: Art prompt for the back design (e.g., "sacred geometry mandala")
     """
-    from .storage import load_decks_index, update_deck_index
+    from .storage import deck_exists, update_deck_meta
     from .venice import generate_card_back
+
+    if not deck_exists(deck_name):
+        return {"success": False, "error": f"Deck '{deck_name}' not found"}
+    if not prompt or not prompt.strip():
+        return {"success": False, "error": "prompt must not be empty"}
 
     venice_key = _get_venice_key()
 
@@ -345,16 +377,7 @@ def generate_back(
     )
 
     if back_path:
-        idx = load_decks_index()
-        meta = idx.get(deck_name, {})
-        update_deck_index(
-            deck_name,
-            num_cards=meta.get("num_cards", 0),
-            vibe=meta.get("vibe", ""),
-            theme=meta.get("theme", ""),
-            back_image=back_path,
-            back_prompt=prompt,
-        )
+        update_deck_meta(deck_name, back_image=back_path, back_prompt=prompt)
         return {"success": True, "back_image_path": back_path}
 
     return {"success": False, "error": "Failed to generate card back"}
@@ -374,27 +397,33 @@ def finalize_deck(
         sheet_size: "letter" (8.5x11), "tabloid" (11x17), "a4", or "a3"
         color_mode: "color" or "bw" (both output as CMYK)
         duplex_flip: "long_edge" (standard duplex alignment) or "short_edge"
+
+    Returns success, the exact output files, and validation errors/warnings.
     """
-    from .finalize import finalize_deck as _finalize
+    from .finalize import finalize_deck_report
 
-    output = _capture_print(
-        _finalize,
-        deck_name,
-        sheet_size=sheet_size,
-        color_mode=color_mode,
-        duplex_flip=duplex_flip,
-    )
+    try:
+        report, output = capture_output(
+            finalize_deck_report,
+            deck_name,
+            sheet_size=sheet_size,
+            color_mode=color_mode,
+            duplex_flip=duplex_flip,
+        )
+    except ValueError as e:
+        return {"success": False, "deck_name": deck_name, "error": str(e)}
 
-    # Collect output file paths
-    import glob
-    pdfs = glob.glob(os.path.join(Config.OUTPUT_DIR, f"{deck_name}_*.pdf"))
-    booklet = os.path.join(Config.OUTPUT_DIR, f"{deck_name}_BOOKLET.pdf")
-
+    pdfs = [p for p in (report["print_pdf"], report["backs_pdf"]) if p]
     return {
-        "success": True,
+        "success": report["success"],
         "deck_name": deck_name,
+        "error": report["error"] or None,
         "pdfs": pdfs,
-        "booklet": booklet if os.path.exists(booklet) else None,
+        "print_pdf": report["print_pdf"] or None,
+        "backs_pdf": report["backs_pdf"] or None,
+        "booklet": report["booklet_pdf"] or None,
+        "pages": report["pages"],
+        "validation": report["validation"],
         "output": output,
     }
 
@@ -435,8 +464,11 @@ def edit_card(
     """
     from .storage import edit_card_field
 
-    success = edit_card_field(deck_name, card_num, field, value)
-    return {"success": success, "card_num": card_num, "field": field}
+    success, output = capture_output(edit_card_field, deck_name, card_num, field, value)
+    result: dict[str, Any] = {"success": bool(success), "card_num": card_num, "field": field}
+    if not success:
+        result["error"] = output or "Edit failed"
+    return result
 
 
 @mcp.tool()
@@ -547,12 +579,14 @@ def register_symbols(
     symbols: list[dict[str, str]],
     auto_describe: bool = True,
     traditional_match: bool = True,
+    replace: bool = False,
 ) -> dict[str, Any]:
     """Register user-provided symbol artwork for a deck.
 
     Call this when a user sends symbol images in Telegram. It copies
     the images to a standard location and creates a symbols.json file
-    that can be passed to preview_style() and create_deck().
+    that can be passed to preview_style() and create_deck(). Repeated
+    calls merge with earlier registrations (same name = replaced).
 
     Args:
         deck_name: Name of the deck these symbols are for
@@ -564,6 +598,7 @@ def register_symbols(
             descriptions for symbols that don't have one
         traditional_match: If True, correlates symbols with traditional
             tarot archetypes and reports deck coverage
+        replace: If True, discard previously registered symbols for this deck
 
     Example:
         register_symbols("Gothic_Rose", [
@@ -574,33 +609,70 @@ def register_symbols(
     import json as json_mod
     import shutil
 
-    symbols_dir = os.path.join(Config.OUTPUT_DIR, "symbols", deck_name)
+    from .storage import validate_deck_name
+    from .symbols import symbol_filename, symbols_dir_for
+
+    try:
+        validate_deck_name(deck_name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if not isinstance(symbols, list) or not symbols:
+        return {"success": False, "error": "symbols must be a non-empty list"}
+
+    symbols_dir = symbols_dir_for(deck_name)
     os.makedirs(symbols_dir, exist_ok=True)
+    symbols_file = os.path.join(symbols_dir, "symbols.json")
+
+    # Merge with symbols registered earlier (artists often send art in batches).
+    previous: list[dict[str, Any]] = []
+    style_prompt = ""
+    if not replace and os.path.exists(symbols_file):
+        try:
+            with open(symbols_file, encoding="utf-8") as f:
+                prev_cfg = json_mod.load(f)
+            previous = [s for s in prev_cfg.get("symbols", []) if isinstance(s, dict)]
+            style_prompt = prev_cfg.get("style_prompt", "")
+        except (OSError, ValueError):
+            previous = []
 
     registered = []
     errors = []
+    allowed_ext = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 
     for sym in symbols:
-        name = sym.get("name", "")
+        if not isinstance(sym, dict):
+            errors.append({"error": "Each symbol must be an object", "input": sym})
+            continue
+        name = (sym.get("name") or "").strip()
         src_path = sym.get("image_path", "")
-        description = sym.get("description", "")
+        description = sym.get("description", "") or ""
 
         if not name:
             errors.append({"error": "Missing 'name' field", "input": sym})
             continue
-        if not src_path or not os.path.exists(src_path):
+        if not src_path or not os.path.isfile(src_path):
             errors.append({
                 "name": name,
                 "error": f"Image not found: {src_path}",
             })
             continue
+        ext = os.path.splitext(src_path)[1].lower() or ".png"
+        if ext not in allowed_ext:
+            errors.append({"name": name, "error": f"Unsupported image type '{ext}'"})
+            continue
+        try:
+            from PIL import Image
+            with Image.open(src_path) as im:
+                im.verify()
+        except Exception:
+            errors.append({"name": name, "error": "File is not a readable image"})
+            continue
 
-        # Copy image to symbols dir
-        ext = os.path.splitext(src_path)[1] or ".png"
-        safe_name = name.replace(" ", "_").replace("/", "-")[:30]
-        dest_filename = f"symbol_{safe_name}{ext}"
+        # Copy image to symbols dir under a collision-free name
+        dest_filename = symbol_filename(name)[: -len(".png")] + ext
         dest_path = os.path.join(symbols_dir, dest_filename)
-        shutil.copy2(src_path, dest_path)
+        if os.path.abspath(src_path) != os.path.abspath(dest_path):
+            shutil.copy2(src_path, dest_path)
 
         registered.append({
             "name": name,
@@ -624,30 +696,44 @@ def register_symbols(
                     sym_entry["description"] = desc
             except Exception:
                 # Non-fatal: symbols work without descriptions
-                for sym_entry in needs_description:
-                    if not sym_entry["description"]:
-                        sym_entry["description"] = sym_entry["name"]
+                pass
+    for sym_entry in registered:
+        if not sym_entry["description"]:
+            sym_entry["description"] = sym_entry["name"]
+
+    # Newly registered symbols replace earlier ones with the same name
+    new_names = {s["name"].lower() for s in registered}
+    all_symbols = [s for s in previous if str(s.get("name", "")).lower() not in new_names]
+    all_symbols.extend(registered)
+
+    if not registered:
+        return {
+            "success": False,
+            "error": "No valid symbols were registered",
+            "registered": 0,
+            "errors": errors,
+        }
 
     # Write symbols.json
     symbols_config = {
-        "style_prompt": "",
-        "symbols": registered,
+        "style_prompt": style_prompt,
+        "symbols": all_symbols,
     }
-    symbols_file = os.path.join(symbols_dir, "symbols.json")
-    with open(symbols_file, "w") as f:
+    with open(symbols_file, "w", encoding="utf-8") as f:
         json_mod.dump(symbols_config, f, indent=2)
 
     # Optional traditional tarot symbol matching analysis
     coverage_info = None
-    if traditional_match and registered:
+    if traditional_match and all_symbols:
         from .symbols import TraditionalDeckRegistry
-        coverage_info = TraditionalDeckRegistry.match_artist_symbols(registered)
+        coverage_info = TraditionalDeckRegistry.match_artist_symbols(all_symbols)
 
     response: dict[str, Any] = {
         "success": True,
         "symbols_file": os.path.abspath(symbols_file),
         "symbols_dir": os.path.abspath(symbols_dir),
         "registered": len(registered),
+        "total_symbols": len(all_symbols),
         "errors": errors,
         "symbols": [
             {"name": s["name"], "description": s["description"][:80]}
@@ -1006,7 +1092,23 @@ def complete_symbols(
         target_scope: 'full' (all cards), 'major' (22 Major Arcana), or 'suits'
         max_generate: Maximum number of missing symbols to generate (default 15)
     """
-    from .symbols import TraditionalDeckRegistry, load_symbols_config
+    from .storage import validate_deck_name
+    from .symbols import TraditionalDeckRegistry, load_symbols_config, symbols_dir_for
+
+    try:
+        validate_deck_name(deck_name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    if target_scope not in ("full", "major", "suits"):
+        return {"success": False, "error": "target_scope must be 'full', 'major' or 'suits'"}
+    if symbols_file and not os.path.isfile(symbols_file):
+        return {"success": False, "error": f"symbols_file not found: {symbols_file}"}
+
+    symbols_dir = symbols_dir_for(deck_name)
+    manifest_file = os.path.join(symbols_dir, "symbols.json")
+    # Default to the symbols this deck's artist already registered.
+    if not symbols_file and os.path.isfile(manifest_file):
+        symbols_file = manifest_file
 
     venice_key = _get_venice_key()
     cfg = load_symbols_config(symbols_file or None)
@@ -1024,21 +1126,27 @@ def complete_symbols(
         rate_limit=1.5,
     )
 
-    symbols_dir = os.path.join(Config.OUTPUT_DIR, deck_name, "symbols")
-    manifest_file = os.path.join(symbols_dir, "symbols.json")
-
-    return {
-        "success": True,
+    generated = completed_cfg.get("generated_symbol_count", 0)
+    failed = completed_cfg.get("failed_symbol_count", 0)
+    result: dict[str, Any] = {
+        "success": failed == 0 or generated > 0,
         "deck_name": deck_name,
         "symbols_file": os.path.abspath(manifest_file),
         "total_symbols": len(completed_cfg.get("symbols", [])),
         "artist_symbols_count": completed_cfg.get("artist_symbol_count", 0),
-        "generated_symbols_count": completed_cfg.get("generated_symbol_count", 0),
+        "generated_symbols_count": generated,
+        "failed_symbols_count": failed,
+        "failed_symbols": [f["name"] for f in completed_cfg.get("failed_symbols", [])],
         "usage_hint": (
             f'Call create_deck(name="{deck_name}", symbol_mode="provide", '
             f'symbols_file="{os.path.abspath(manifest_file)}", traditional_mode=True)'
         ),
     }
+    if failed:
+        result["error"] = (
+            f"{failed} symbol(s) failed to generate; call complete_symbols again to retry them."
+        )
+    return result
 
 
 @mcp.tool()

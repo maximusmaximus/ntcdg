@@ -2,11 +2,46 @@
 
 import json
 import os
+import re
+import tempfile
+import threading
 from datetime import datetime
 from typing import Any
 
 from .config import Config, logger, pd
 from .models import Card
+
+# Deck names become file names, so they must never contain path separators.
+DECK_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+
+# Serialises read-modify-write cycles on the shared index file when several
+# jobs (web workers, MCP calls) touch it concurrently in one process.
+_INDEX_LOCK = threading.RLock()
+
+
+def validate_deck_name(deck_name: str) -> str:
+    """Raise ValueError unless ``deck_name`` is a safe file-name stem."""
+    if not isinstance(deck_name, str) or not DECK_NAME_RE.match(deck_name):
+        raise ValueError(
+            f"Invalid deck name {deck_name!r}: use 1-100 letters, numbers, "
+            "underscores or hyphens."
+        )
+    return deck_name
+
+
+def _atomic_write_json(path: str, data: Any) -> None:
+    """Write JSON via temp file + os.replace so readers never see half a file."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 def _get_decks_index_file() -> str:
@@ -17,34 +52,59 @@ def _get_decks_index_file() -> str:
 # ==================== DECK INDEX ====================
 def load_decks_index() -> dict[str, Any]:
     index_file = _get_decks_index_file()
-    if os.path.exists(index_file):
-        with open(index_file) as f:
-            return json.load(f)
+    with _INDEX_LOCK:
+        if os.path.exists(index_file):
+            try:
+                with open(index_file) as f:
+                    return json.load(f)
+            except json.JSONDecodeError as e:
+                logger.error(f"Deck index is corrupt ({index_file}): {e}")
+                return {}
     return {}
 
 
 def save_decks_index(index: dict[str, Any]):
-    index_file = _get_decks_index_file()
-    os.makedirs(os.path.dirname(index_file) or ".", exist_ok=True)
-    with open(index_file, "w") as f:
-        json.dump(index, f, indent=2)
+    with _INDEX_LOCK:
+        _atomic_write_json(_get_decks_index_file(), index)
 
 
-def update_deck_index(deck_name: str, num_cards: int, vibe: str = "", theme: str = "",
-                      *, back_image: str | None = None, back_prompt: str | None = None):
-    index = load_decks_index()
-    existing = index.get(deck_name, {})
-    index[deck_name] = {
-        "name": deck_name,
-        "num_cards": num_cards,
-        "vibe": vibe,
-        "theme": theme,
-        "last_modified": datetime.now().isoformat(),
-        "created": existing.get("created", datetime.now().isoformat()),
-        "back_image": back_image or existing.get("back_image", ""),
-        "back_prompt": back_prompt or existing.get("back_prompt", ""),
-    }
-    save_decks_index(index)
+def update_deck_meta(deck_name: str, **fields: Any) -> dict[str, Any]:
+    """Atomically merge arbitrary metadata fields into a deck's index entry."""
+    validate_deck_name(deck_name)
+    with _INDEX_LOCK:
+        index = load_decks_index()
+        entry = index.get(deck_name, {"name": deck_name})
+        entry.update(fields)
+        entry["last_modified"] = datetime.now().isoformat()
+        entry.setdefault("created", entry["last_modified"])
+        index[deck_name] = entry
+        save_decks_index(index)
+        return entry
+
+
+def update_deck_index(deck_name: str, num_cards: int, vibe: str | None = None,
+                      theme: str | None = None, *, back_image: str | None = None,
+                      back_prompt: str | None = None):
+    """Merge core fields into the index entry.
+
+    ``None`` means "leave unchanged" so that routine saves (e.g. ``save_deck``)
+    no longer wipe the vibe, theme, usage stats, or public URL metadata.
+    """
+    fields: dict[str, Any] = {"name": deck_name, "num_cards": num_cards}
+    if vibe is not None:
+        fields["vibe"] = vibe
+    if theme is not None:
+        fields["theme"] = theme
+    if back_image:
+        fields["back_image"] = back_image
+    if back_prompt:
+        fields["back_prompt"] = back_prompt
+    validate_deck_name(deck_name)
+    with _INDEX_LOCK:
+        existing = load_decks_index().get(deck_name, {})
+        defaults = {"vibe": "", "theme": "", "back_image": "", "back_prompt": ""}
+        missing = {k: v for k, v in defaults.items() if k not in existing and k not in fields}
+        update_deck_meta(deck_name, **missing, **fields)
 
 
 def list_decks():
@@ -194,6 +254,7 @@ def list_cards(deck_name: str):
 # ==================== DECK LOADING / SAVING ====================
 def load_deck(deck_name: str) -> list[Card]:
     """Load a deck from JSON, returning a list of Card objects."""
+    validate_deck_name(deck_name)
     json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
     if os.path.exists(json_path):
         with open(json_path) as f:
@@ -202,13 +263,64 @@ def load_deck(deck_name: str) -> list[Card]:
     return []
 
 
-def save_deck(deck: list[Card], deck_name: str):
-    """Save a deck to JSON, update spreadsheet and index."""
+def deck_exists(deck_name: str) -> bool:
+    validate_deck_name(deck_name)
+    return os.path.exists(os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json"))
+
+
+_ARTIFACT_SUFFIX_RE = re.compile(
+    r"^_(?:"
+    r"(?:PRINT|BACKS|DUPLEX)_[a-z0-9]+_[a-z]+(?:_[a-z_]+)?\.pdf"
+    r"|BOOKLET\.pdf"
+    r"|MASTER\.xlsx"
+    r"|BUNDLE\.zip"
+    r"|CALIBRATION_[a-z0-9]+(?:_[a-z_]+)?\.pdf"
+    r")$"
+)
+
+
+def deck_artifact_files(
+    deck_name: str, *, include_json: bool = False, include_bundle: bool = False,
+) -> list[str]:
+    """Return generated files that belong to exactly ``deck_name``.
+
+    Globbing ``{deck}_*`` is unsafe: deck ``a`` would match files of a deck
+    called ``a_PRINT_x``. Each candidate's suffix is checked against the known
+    artifact patterns (whose sheet/colour tokens never contain upper case),
+    so other decks' files are never matched.
+    """
+    validate_deck_name(deck_name)
+    out_dir = Config.OUTPUT_DIR
+    if not os.path.isdir(out_dir):
+        return []
+    found: list[str] = []
+    prefix = deck_name
+    for fname in sorted(os.listdir(out_dir)):
+        if include_json and fname == f"{deck_name}.json":
+            found.append(os.path.join(out_dir, fname))
+            continue
+        if not fname.startswith(prefix + "_"):
+            continue
+        suffix = fname[len(prefix):]
+        if not _ARTIFACT_SUFFIX_RE.match(suffix):
+            continue
+        if suffix == "_BUNDLE.zip" and not include_bundle:
+            continue
+        found.append(os.path.join(out_dir, fname))
+    return found
+
+
+def save_deck(deck: list[Card], deck_name: str, *, export: bool = True):
+    """Save a deck to JSON, update spreadsheet and index.
+
+    ``export=False`` skips the spreadsheet; used for cheap per-card checkpoints
+    during long generations so a crash never loses completed cards.
+    """
+    validate_deck_name(deck_name)
     json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
-    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-    with open(json_path, "w") as f:
-        json.dump([c.to_dict() for c in deck], f, indent=2)
-    export_spreadsheet(deck, deck_name)
+    _atomic_write_json(json_path, [c.to_dict() for c in deck])
+    if export:
+        export_spreadsheet(deck, deck_name)
     update_deck_index(deck_name, len(deck))
 
 
@@ -266,12 +378,13 @@ def edit_card_field(
 ) -> bool:
     """Edit a single field of a card in a saved deck.
 
-    Valid fields: title, new_title, description,
+    Valid fields: title, new_title, venice_title, description,
     upright_interpretation, reversed_interpretation.
+    ``venice_title`` is the displayed title when Venice named the card.
     Returns True on success.
     """
     valid_fields = {
-        "title", "new_title", "description",
+        "title", "new_title", "venice_title", "description",
         "upright_interpretation", "reversed_interpretation",
     }
     if field not in valid_fields:
@@ -318,26 +431,15 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
             print("Cancelled.")
             return False
 
-    import glob
-
     # Remove card images
     for card in deck:
         if card.image_path and os.path.exists(str(card.image_path)):
             os.remove(card.image_path)
 
     # Remove deck files (JSON, PDFs, spreadsheet, bundle)
-    patterns = [
-        f"{deck_name}.json",
-        f"{deck_name}_PRINT_*.pdf",
-        f"{deck_name}_BACKS_*.pdf",
-        f"{deck_name}_BOOKLET.pdf",
-        f"{deck_name}_MASTER.xlsx",
-        f"{deck_name}_BUNDLE.zip",
-    ]
-    for pattern in patterns:
-        for filepath in glob.glob(os.path.join(Config.OUTPUT_DIR, pattern)):
-            os.remove(filepath)
-            logger.info(f"Removed: {filepath}")
+    for filepath in deck_artifact_files(deck_name, include_json=True, include_bundle=True):
+        os.remove(filepath)
+        logger.info(f"Removed: {filepath}")
 
     # Remove back image
     index = load_decks_index()
@@ -347,9 +449,11 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
         os.remove(back)
 
     # Remove from index
-    if deck_name in index:
-        del index[deck_name]
-        save_decks_index(index)
+    with _INDEX_LOCK:
+        index = load_decks_index()
+        if deck_name in index:
+            del index[deck_name]
+            save_decks_index(index)
 
     print(f"Deck '{deck_name}' deleted.")
     return True
@@ -392,11 +496,19 @@ def clone_deck(source_name: str, dest_name: str) -> bool:
     index = load_decks_index()
     source_meta = index.get(source_name, {})
     if source_meta:
+        # Copy the back image so deleting either deck never removes the other's back.
+        back = source_meta.get("back_image", "")
+        new_back = ""
+        if back and os.path.exists(back):
+            new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
+            os.makedirs(new_dir, exist_ok=True)
+            new_back = os.path.join(new_dir, f"back_{os.path.basename(back)}")
+            shutil.copy2(back, new_back)
         update_deck_index(
             dest_name, len(cloned_deck),
             vibe=source_meta.get("vibe", ""),
             theme=source_meta.get("theme", ""),
-            back_image=source_meta.get("back_image", ""),
+            back_image=new_back,
             back_prompt=source_meta.get("back_prompt", ""),
         )
 

@@ -136,8 +136,9 @@ class TestMCPTraditionalTools:
 
         monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
 
+        from PIL import Image
         img1 = tmp_path / "chalice.png"
-        img1.write_bytes(b"chalice image")
+        Image.new("RGB", (4, 4), "gold").save(img1)
 
         result = register_symbols(
             deck_name="SymbolDeck",
@@ -154,27 +155,63 @@ class TestMCPTraditionalTools:
         assert len(result["matched_traditional"]) >= 1
 
     def test_finalize_deck_accepts_sheet_size_and_duplex(self, tmp_path, monkeypatch):
-        """finalize_deck should accept updated sheet_size and duplex_flip options."""
+        """finalize_deck must really run with sheet_size + duplex_flip (no mocks).
+
+        The previous version of this test mocked finalize and so hid a
+        TypeError: the duplex_flip keyword was not accepted downstream.
+        """
+        from PIL import Image
+
+        from ntcdg.mcp_server import finalize_deck
+        from ntcdg.storage import save_deck, update_deck_meta
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+
+        deck = []
+        for i in range(1, 4):
+            img = tmp_path / f"card_{i}.png"
+            Image.new("RGB", (60, 100), (i * 40, 20, 90)).save(img)
+            deck.append(Card(
+                position=i, title=f"Card {i}", card_type="Major Arcana",
+                image_path=str(img), description="d",
+                upright_interpretation="u", reversed_interpretation="r",
+            ))
+        save_deck(deck, "FinalizeTestDeck")
+        back = tmp_path / "back.png"
+        Image.new("RGB", (60, 100), "black").save(back)
+        update_deck_meta("FinalizeTestDeck", back_image=str(back))
+
+        for flip in ("long_edge", "short_edge"):
+            result = finalize_deck(
+                deck_name="FinalizeTestDeck", sheet_size="a4", duplex_flip=flip,
+            )
+            assert result["success"] is True, result
+            assert result["print_pdf"].endswith("FinalizeTestDeck_PRINT_a4_color.pdf")
+            assert result["backs_pdf"].endswith("FinalizeTestDeck_BACKS_a4_color.pdf")
+            assert result["validation"]["errors"] == []
+            assert result["pages"] == 1
+
+    def test_finalize_deck_rejects_bad_options(self, tmp_path, monkeypatch):
+        from ntcdg.mcp_server import finalize_deck
+
+        monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+        for kwargs in (
+            {"sheet_size": "postcard"},
+            {"duplex_flip": "none"},
+            {"color_mode": "rainbow"},
+        ):
+            result = finalize_deck(deck_name="Whatever", **kwargs)
+            assert result["success"] is False
+            assert "Unknown" in result["error"]
+
+    def test_finalize_deck_reports_validation_failure(self, tmp_path, monkeypatch):
         from ntcdg.mcp_server import finalize_deck
         from ntcdg.storage import save_deck
 
         monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
+        save_deck([Card(position=1, title="The Fool")], "NoImages")
 
-        deck = [
-            Card(position=1, title="The Fool", card_type="Major Arcana"),
-        ]
-        save_deck(deck, "FinalizeTestDeck")
-
-        with patch("ntcdg.finalize.finalize_deck") as mock_fin:
-            result = finalize_deck(
-                deck_name="FinalizeTestDeck",
-                sheet_size="a4",
-                duplex_flip="long_edge",
-            )
-            assert result["success"] is True
-            mock_fin.assert_called_once_with(
-                "FinalizeTestDeck",
-                sheet_size="a4",
-                color_mode="color",
-                duplex_flip="long_edge",
-            )
+        result = finalize_deck(deck_name="NoImages")
+        assert result["success"] is False
+        assert result["validation"]["errors"]
+        assert result["print_pdf"] is None

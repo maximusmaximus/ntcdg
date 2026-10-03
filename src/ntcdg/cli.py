@@ -198,8 +198,8 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
     )
     fin.add_argument(
         "--duplex-flip", type=str, default="long_edge",
-        choices=["long_edge", "short_edge", "none"],
-        help="Duplex flip edge ('long_edge', 'short_edge', 'none')",
+        choices=["long_edge", "short_edge"],
+        help="Printer duplex flip edge: 'long_edge' (default) or 'short_edge'",
     )
     fin.add_argument(
         "--color-mode", type=str, default="color",
@@ -316,14 +316,22 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
 
     elif args.retry_failed:
         from .generator import generate_deck
+        from .storage import deck_exists, load_deck, load_decks_index
         if not venice_key:
             parser.error("--retry-failed requires VENICE_API_KEY")
+        if not deck_exists(args.retry_failed):
+            parser.error(f"Deck '{args.retry_failed}' not found")
+        meta = load_decks_index().get(args.retry_failed, {})
+        target = (
+            meta.get("target_cards") or meta.get("num_cards")
+            or len(load_deck(args.retry_failed))
+        )
         print(f"\nRetrying failed cards in '{args.retry_failed}'...")
         generate_deck(
             name=args.retry_failed,
-            num_cards=args.cards,
-            vibe=args.vibe,
-            deck_prompt=args.deck_prompt,
+            num_cards=int(target),
+            vibe=args.vibe or meta.get("vibe") or None,
+            deck_prompt=args.deck_prompt or meta.get("theme", ""),
             venice_key=venice_key,
             analyze=True,
             text_model=args.venice_text_model,
@@ -481,7 +489,6 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             preview=not args.no_preview,
             traditional_mode=args.traditional,
             auto_complete_symbols=args.complete_symbols,
-            sheet_size=args.sheet_size,
         )
 
     else:

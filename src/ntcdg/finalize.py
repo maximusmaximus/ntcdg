@@ -56,6 +56,9 @@ SHEET_SIZES = {
     "a3": (11.69, 16.54),
 }
 
+COLOR_MODES = ("color", "bw")
+DUPLEX_FLIPS = ("long_edge", "short_edge")
+
 
 # ==================== VALIDATION ====================
 def validate_deck(deck: list[Card]) -> dict:
@@ -858,7 +861,6 @@ def export_deck_bundle(deck_name: str) -> str:
     - Spreadsheet (if exists)
     - Deck JSON data
     """
-    import glob
     import zipfile
 
     deck = load_deck(deck_name)
@@ -882,16 +884,10 @@ def export_deck_bundle(deck_name: str) -> str:
         if back and os.path.exists(back):
             zf.write(back, f"images/{os.path.basename(back)}")
 
-        # PDFs and spreadsheet
-        patterns = [
-            f"{deck_name}_PRINT_*.pdf",
-            f"{deck_name}_BACKS_*.pdf",
-            f"{deck_name}_BOOKLET.pdf",
-            f"{deck_name}_MASTER.xlsx",
-        ]
-        for pattern in patterns:
-            for filepath in glob.glob(os.path.join(Config.OUTPUT_DIR, pattern)):
-                zf.write(filepath, os.path.basename(filepath))
+        # PDFs and spreadsheet (exact-match so similarly named decks never leak in)
+        from .storage import deck_artifact_files
+        for filepath in deck_artifact_files(deck_name):
+            zf.write(filepath, os.path.basename(filepath))
 
         # Deck JSON
         json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
@@ -904,27 +900,58 @@ def export_deck_bundle(deck_name: str) -> str:
 
 
 # ==================== FINALIZATION WORKFLOW ====================
-def finalize_deck(
+def validate_print_options(sheet_size: str, color_mode: str, duplex_flip: str = "long_edge") -> None:
+    """Raise ``ValueError`` with a helpful message for unsupported print options."""
+    if sheet_size not in SHEET_SIZES:
+        raise ValueError(
+            f"Unknown sheet_size {sheet_size!r}; choose one of {sorted(SHEET_SIZES)}"
+        )
+    if color_mode not in COLOR_MODES:
+        raise ValueError(f"Unknown color_mode {color_mode!r}; choose one of {list(COLOR_MODES)}")
+    if duplex_flip not in DUPLEX_FLIPS:
+        raise ValueError(
+            f"Unknown duplex_flip {duplex_flip!r}; choose one of {list(DUPLEX_FLIPS)}"
+        )
+
+
+def finalize_deck_report(
     deck_name: str,
     sheet_size: str = "letter",
     color_mode: str = "color",
-) -> str:
+    duplex_flip: str = "long_edge",
+) -> dict:
     """
-    Finalize a deck: validate, generate print PDF and companion booklet.
+    Finalize a deck and return a structured report.
 
     Steps:
     1. Load deck and validate completeness
     2. Report errors (block) and warnings (inform)
     3. Generate CMYK print PDF with crop marks
     4. Generate companion booklet PDF (card-sized)
-    5. Print summary
+    5. Generate backs PDF registered for ``duplex_flip`` (if a back image exists)
+    6. Print summary
 
-    Returns path to the print PDF, or "" on failure.
+    Returns ``{"success", "error", "print_pdf", "backs_pdf", "booklet_pdf",
+    "pages", "validation": {"errors", "warnings"}}``.
+    Raises ``ValueError`` for unsupported sheet/color/duplex options.
     """
+    validate_print_options(sheet_size, color_mode, duplex_flip)
+
+    result: dict = {
+        "success": False,
+        "error": "",
+        "print_pdf": "",
+        "backs_pdf": "",
+        "booklet_pdf": "",
+        "pages": 0,
+        "validation": {"errors": [], "warnings": []},
+    }
+
     deck = load_deck(deck_name)
     if not deck:
         print(f"Deck '{deck_name}' not found.")
-        return ""
+        result["error"] = f"Deck '{deck_name}' not found"
+        return result
 
     sheet_w, sheet_h = SHEET_SIZES[sheet_size]
     layout = _calculate_grid(sheet_w, sheet_h)
@@ -938,6 +965,7 @@ def finalize_deck(
 
     # --- Validate ---
     report = validate_deck(deck)
+    result["validation"] = {"errors": list(report["errors"]), "warnings": list(report["warnings"])}
 
     if report["warnings"]:
         print(f"\n  {len(report['warnings'])} warning(s):")
@@ -952,7 +980,8 @@ def finalize_deck(
         for e in report["errors"]:
             print(f"   * {e}")
         print("\nCannot finalize. Fix errors above first.")
-        return ""
+        result["error"] = "Deck failed validation"
+        return result
 
     if not report["warnings"]:
         print("\nDeck passes all completeness checks.")
@@ -960,6 +989,7 @@ def finalize_deck(
     # --- Generate print PDF ---
     printable = [c for c in deck if c.image_path and os.path.exists(str(c.image_path))]
     total_pages = math.ceil(len(printable) / layout["cards_per_page"])
+    result["pages"] = total_pages
 
     print(f"\nGenerating print PDF ({len(printable)} cards -> {total_pages} pages)...")
     pdf_path = create_print_pdf(deck, deck_name, sheet_size, color_mode)
@@ -981,10 +1011,20 @@ def finalize_deck(
             back_image_path=back_image,
             sheet_size=sheet_size,
             color_mode=color_mode,
+            duplex_flip=duplex_flip,
         )
     else:
         print("No card back image found -- skipping backs PDF.")
         print("   (Use --set-back DeckName --back-prompt '...' to generate one)")
+
+    result.update(
+        print_pdf=pdf_path or "",
+        backs_pdf=backs_path or "",
+        booklet_pdf=booklet_path or "",
+        success=bool(pdf_path),
+    )
+    if not pdf_path:
+        result["error"] = "Print PDF could not be generated (is reportlab installed?)"
 
     if pdf_path:
         print(f"\n{'=' * 60}")
@@ -1000,4 +1040,18 @@ def finalize_deck(
         print(f"   Color space: CMYK ({color_mode})")
         print(f"{'=' * 60}\n")
 
-    return pdf_path
+    return result
+
+
+def finalize_deck(
+    deck_name: str,
+    sheet_size: str = "letter",
+    color_mode: str = "color",
+    duplex_flip: str = "long_edge",
+) -> str:
+    """Finalize a deck (see :func:`finalize_deck_report`).
+
+    Returns path to the print PDF, or "" on failure.
+    Raises ``ValueError`` for unsupported sheet/color/duplex options.
+    """
+    return finalize_deck_report(deck_name, sheet_size, color_mode, duplex_flip)["print_pdf"]

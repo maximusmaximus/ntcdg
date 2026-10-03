@@ -96,6 +96,27 @@ ntcdg --deck --name MyDeck --cards 78 \
 
 An example `symbols.json` is included in the repo.
 
+All of a deck's symbol images and manifests live in `generated_decks/symbols/<deck>/`
+(artist uploads via `register_symbols`, AI-completed traditional symbols, and
+cohesive generated symbols). Registering symbols again **merges** with earlier
+batches (same name = replaced); pass `replace=True` to start over.
+
+## Reliability
+
+- **Checkpointing & resume** — the deck is saved after every card. If a run is
+  interrupted, `ntcdg --retry-failed MyDeck` (or the MCP `retry_failed` tool)
+  resumes to the originally requested size and never duplicates cards.
+- **Safe metadata** — saving a deck merges into the index instead of overwriting,
+  so vibe, theme, back image and usage stats are preserved; writes are atomic and
+  locked for concurrent callers.
+- **Safe names** — deck names must match `^[A-Za-z0-9_-]{1,100}$` (no path tricks),
+  and deleting/bundling a deck only touches files that belong to exactly that deck.
+- **No silent overwrites** — MCP `create_deck` refuses to replace an existing deck
+  unless `overwrite=True`.
+- **Failures are reported** — failed symbol generations are listed separately
+  (`failed_symbols`), and `finalize_deck` returns `success`, the exact output files
+  and the validation errors/warnings.
+
 ## Project Structure
 
 ```

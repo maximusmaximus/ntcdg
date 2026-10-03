@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -1422,6 +1423,7 @@ class TraditionalDeckRegistry:
         available_symbols: list[dict[str, Any]] | None = None,
         traditional_mode: bool = True,
         max_symbols: int = 4,
+        analysis: dict[str, Any] | None = None,
     ) -> list[str]:
         """
         Assign authentic symbols for a specific card.
@@ -1431,6 +1433,9 @@ class TraditionalDeckRegistry:
         2. If available_symbols match those canonical archetypes, uses the artist's symbol.
         3. If traditional slots remain, fills with the traditional archetype descriptions.
         4. If extra space remains, blends in unmatched artist symbols (accent/flair symbols).
+
+        ``analysis`` may be a precomputed ``match_artist_symbols(available_symbols)``
+        result; when omitted it is computed here.
 
         If traditional_mode is False:
         Falls back to legacy random sampling.
@@ -1448,11 +1453,12 @@ class TraditionalDeckRegistry:
         # Map available symbols to canonical archetypes if present
         matched_map: dict[str, dict[str, Any]] = {}
         unmatched_artist: list[dict[str, Any]] = []
-        if available_symbols:
+        if analysis is None and available_symbols:
             analysis = cls.match_artist_symbols(available_symbols)
-            for m in analysis["matched"]:
+        if analysis:
+            for m in analysis.get("matched", []):
                 matched_map[m["traditional_id"]] = m["artist_symbol"]
-            unmatched_artist = analysis["unmatched_artist"]
+            unmatched_artist = analysis.get("unmatched_artist", [])
 
         # Prioritize artist-provided symbols that match this card's canonical archetypes
         for canon in canonical_symbols:
@@ -1498,7 +1504,7 @@ class TraditionalDeckRegistry:
         and generate cohesive reference artwork for them using Venice AI in the artist's visual style.
         Returns the unified symbols_config containing both artist and generated symbols.
         """
-        symbols_dir = os.path.join(Config.OUTPUT_DIR, deck_name, "symbols")
+        symbols_dir = symbols_dir_for(deck_name)
         os.makedirs(symbols_dir, exist_ok=True)
 
         provided = symbols_config.get("symbols", [])
@@ -1506,6 +1512,7 @@ class TraditionalDeckRegistry:
         for s in provided:
             if "source" not in s:
                 s["source"] = "artist"
+        artist_count = sum(1 for s in provided if s.get("source") == "artist")
 
         missing = cls.get_missing_symbols(provided, target_scope=target_scope)
         if max_missing and max_missing > 0:
@@ -1513,7 +1520,18 @@ class TraditionalDeckRegistry:
 
         if not missing:
             logger.info("No missing traditional symbols need generation")
-            return symbols_config
+            updated_config = {
+                **symbols_config,
+                "symbols": list(provided),
+                "artist_symbol_count": artist_count,
+                "generated_symbol_count": 0,
+                "failed_symbol_count": 0,
+                "failed_symbols": [],
+            }
+            manifest_path = os.path.join(symbols_dir, "symbols.json")
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(updated_config, f, indent=2)
+            return updated_config
 
         style = symbols_config.get("style_prompt", "")
         if not style:
@@ -1527,6 +1545,7 @@ class TraditionalDeckRegistry:
         logger.info(f"Generating {len(missing)} missing traditional tarot symbols in artist style...")
 
         generated_symbols: list[dict[str, Any]] = []
+        failed_symbols: list[dict[str, Any]] = []
         iterator = range(len(missing))
         if HAS_TQDM:
             iterator = tqdm(iterator, desc="Generating Traditional Symbols", unit="symbol", ncols=110)
@@ -1543,7 +1562,7 @@ class TraditionalDeckRegistry:
                 "suitable as a recurring traditional tarot card symbol. No card borders, no letters, no text."
             )
 
-            img_path = _generate_single_symbol(
+            img_path = _safe_generate_symbol(
                 prompt=prompt,
                 name=sym["name"],
                 output_dir=symbols_dir,
@@ -1551,6 +1570,15 @@ class TraditionalDeckRegistry:
                 model=image_model,
                 rate_limit=rate_limit,
             )
+
+            if not img_path:
+                logger.warning(f"  Failed to generate traditional symbol: {sym['name']}")
+                failed_symbols.append({
+                    "name": sym["name"],
+                    "traditional_id": sym["id"],
+                    "category": sym["category"],
+                })
+                continue
 
             entry = {
                 "name": sym["name"],
@@ -1567,13 +1595,15 @@ class TraditionalDeckRegistry:
         updated_config = {
             "style_prompt": symbols_config.get("style_prompt", ""),
             "symbols": merged_symbols,
-            "artist_symbol_count": len(provided),
+            "artist_symbol_count": artist_count,
             "generated_symbol_count": len(generated_symbols),
+            "failed_symbol_count": len(failed_symbols),
+            "failed_symbols": failed_symbols,
         }
 
         # Save manifest
         manifest_path = os.path.join(symbols_dir, "symbols.json")
-        with open(manifest_path, "w") as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(updated_config, f, indent=2)
         logger.info(f"Completed symbols saved to: {manifest_path}")
 
@@ -1581,6 +1611,30 @@ class TraditionalDeckRegistry:
 
 
 # ==================== SYMBOL CONFIGURATION ====================
+
+def symbols_dir_for(deck_name: str) -> str:
+    """Directory holding a deck's symbol images and manifests.
+
+    ``OUTPUT_DIR/symbols/<deck>`` is used everywhere (artist uploads, generated
+    traditional symbols, cohesive symbol generation) so a deck's symbols are
+    always in one place and a deck called ``images`` can't collide with the
+    top-level images folder.
+    """
+    return os.path.join(Config.OUTPUT_DIR, "symbols", deck_name)
+
+
+def _safe_generate_symbol(**kwargs: Any) -> str | None:
+    """Call ``_generate_single_symbol`` but turn exhausted retries into ``None``.
+
+    The retry decorator re-raises the last exception; one bad symbol must not
+    abort generation of the remaining symbols (or the whole deck).
+    """
+    try:
+        return _generate_single_symbol(**kwargs)
+    except Exception as e:
+        logger.warning(f"Symbol generation failed for {kwargs.get('name')!r}: {e}")
+        return None
+
 
 def load_symbols_config(symbols_file: str = None) -> dict[str, Any]:
     """
@@ -1653,7 +1707,7 @@ def generate_symbol_images(
         logger.warning("Cannot generate symbol images: missing API key or requests library")
         return symbols_config
 
-    symbols_dir = os.path.join(Config.OUTPUT_DIR, deck_name, "symbols")
+    symbols_dir = symbols_dir_for(deck_name)
     os.makedirs(symbols_dir, exist_ok=True)
 
     style = symbols_config.get("style_prompt", "")
@@ -1690,7 +1744,7 @@ def generate_symbol_images(
             "suitable as a recurring tarot card symbol. No text, no borders, no frames."
         )
 
-        img_path = _generate_single_symbol(
+        img_path = _safe_generate_symbol(
             prompt=prompt,
             name=symbol["name"],
             output_dir=symbols_dir,
@@ -1743,10 +1797,20 @@ def _generate_single_symbol(
 
     b64 = _extract_image_b64(data)
     if b64:
-        safe_name = name.replace(" ", "_").replace("/", "-")[:30]
-        filename = f"symbol_{safe_name}.png"
-        filepath = os.path.join(output_dir, filename)
+        filepath = os.path.join(output_dir, symbol_filename(name))
         with open(filepath, "wb") as f:
             f.write(base64.b64decode(b64))
         return filepath
     return None
+
+
+def symbol_filename(name: str) -> str:
+    """Filesystem-safe, collision-resistant PNG filename for a symbol name.
+
+    Slugs alone collide when long names share a prefix (or differ only in
+    punctuation), so a short content hash of the full name is appended.
+    """
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")[:30] or "symbol"
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    return f"symbol_{slug}_{digest}.png"
+
