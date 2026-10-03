@@ -297,11 +297,12 @@ class TestSymbolRegistration:
 
         monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
 
-        # Create fake symbol images
+        # Create real (tiny) symbol images -- registration verifies image files
+        from PIL import Image
         img1 = tmp_path / "serpent.png"
         img2 = tmp_path / "eye.png"
-        img1.write_bytes(b"fake serpent image")
-        img2.write_bytes(b"fake eye image")
+        Image.new("RGB", (4, 4), "green").save(img1)
+        Image.new("RGB", (4, 4), "blue").save(img2)
 
         result = register_symbols(
             deck_name="TestDeck",
@@ -370,8 +371,9 @@ class TestSymbolRegistration:
 
         monkeypatch.setattr("ntcdg.config.Config.OUTPUT_DIR", str(tmp_path))
 
+        from PIL import Image
         img = tmp_path / "test.png"
-        img.write_bytes(b"data")
+        Image.new("RGB", (4, 4)).save(img)
 
         result = register_symbols(
             deck_name="MyDeck",

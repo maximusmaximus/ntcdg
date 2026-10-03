@@ -178,7 +178,7 @@ class TestTraditionalDeckRegistry:
             assert len(completed["symbols"]) == 4
 
             # Verify manifest file on disk
-            manifest = tmp_path / "TestDeck" / "symbols" / "symbols.json"
+            manifest = tmp_path / "symbols" / "TestDeck" / "symbols.json"
             assert manifest.exists()
             with open(manifest) as f:
                 saved = json.load(f)

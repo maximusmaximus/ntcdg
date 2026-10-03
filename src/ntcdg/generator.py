@@ -2,13 +2,14 @@
 
 import os
 import random
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
 from .overlay import compose_card, get_card_number_text
-from .storage import load_deck, save_deck, update_deck_index
+from .storage import load_deck, save_deck, update_deck_index, update_deck_meta
 from .style import extract_deck_style, refine_card_prompt
 from .symbols import generate_symbol_images, load_symbols_config
 from .usage import UsageTracker
@@ -69,6 +70,48 @@ def build_canonical_deck(num_cards: int = 78) -> list[dict[str, Any]]:
     return cards
 
 
+def _card_def_from_card(card: Card) -> dict[str, Any]:
+    return {
+        "type": card.card_type,
+        "title": card.title,
+        "arcana_number": card.arcana_number,
+        "suit": card.suit,
+        "rank": card.rank,
+    }
+
+
+def align_card_defs_with_existing(
+    card_defs: list[dict[str, Any]],
+    existing_cards: dict[int, Card],
+) -> list[dict[str, Any]]:
+    """Make a freshly built card list agree with cards saved by a previous run.
+
+    Partial decks (< 78 cards) shuffle the Minor Arcana, so rebuilding on resume
+    can assign different titles to positions -- or duplicate a title that an
+    already-saved card holds. Saved positions keep their identity and any
+    remaining collisions are swapped for unused canonical cards.
+    """
+    aligned = [dict(d) for d in card_defs]
+    for pos, card in existing_cards.items():
+        if 1 <= pos <= len(aligned) and card.title:
+            aligned[pos - 1] = _card_def_from_card(card)
+
+    taken = {
+        aligned[pos - 1]["title"] for pos in existing_cards if 1 <= pos <= len(aligned)
+    }
+    spares = [d for d in build_canonical_deck(78) if d["title"] not in taken]
+    seen: set[str] = set(taken)
+    for i, d in enumerate(aligned):
+        if (i + 1) in existing_cards:
+            continue
+        if d["title"] in seen and len(aligned) <= 78:
+            replacement = next((s for s in spares if s["title"] not in seen), None)
+            if replacement:
+                aligned[i] = dict(replacement)
+        seen.add(aligned[i]["title"])
+    return aligned
+
+
 # ==================== CARD GENERATION ====================
 def generate_card(
     position: int,
@@ -78,6 +121,7 @@ def generate_card(
     deck_prompt: str = "",
     symbols: list[dict[str, Any]] = None,
     traditional_mode: bool = True,
+    artist_analysis: dict[str, Any] | None = None,
 ) -> Card:
     """
     Enrich a card definition with symbols, layout, and prompt.
@@ -89,21 +133,24 @@ def generate_card(
     suit = card_def.get("suit")
     rank = card_def.get("rank")
 
+    # Pip count / suit emblem always leads for minor arcana: it is what makes
+    # a "Three of Cups" recognisable regardless of symbol mode.
+    card_symbols: list[str] = []
+    if suit and isinstance(rank, int):
+        card_symbols.append(f"{rank} glowing {suit.lower()}")
+    elif suit:
+        card_symbols.append(f"prominent {suit.lower()}")
+
     if traditional_mode:
         from .symbols import TraditionalDeckRegistry
-        card_symbols = TraditionalDeckRegistry.assign_symbols_for_card(
+        card_symbols.extend(TraditionalDeckRegistry.assign_symbols_for_card(
             card_def=card_def,
             available_symbols=symbols,
             traditional_mode=True,
             max_symbols=4,
-        )
+            analysis=artist_analysis,
+        ))
     else:
-        card_symbols = []
-        if suit and isinstance(rank, int):
-            card_symbols.append(f"{rank} glowing {suit.lower()}")
-        elif suit:
-            card_symbols.append(f"prominent {suit.lower()}")
-
         # Select symbols from user-defined list (or defaults)
         available = symbols or Config.DEFAULT_SYMBOLS
         symbol_names = [s["name"] if isinstance(s, dict) else s for s in available]
@@ -539,8 +586,23 @@ def generate_deck(
     preview: bool = True,
     traditional_mode: bool = True,
     auto_complete_symbols: bool = False,
-    sheet_size: str = "letter",
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ):
+    """Generate (or resume) a full deck.
+
+    ``on_event`` receives dicts such as ``{"type": "card_started", ...}``,
+    ``{"type": "card_prompt", ...}``, ``{"type": "card_done", ...}`` so a UI
+    can show each step's inputs and outputs as they happen. Exceptions raised
+    by the callback are logged and never abort generation.
+    """
+    def emit(event_type: str, **payload: Any) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event({"type": event_type, **payload})
+        except Exception as e:  # never let a UI hook kill a long run
+            logger.warning(f"on_event callback failed: {e}")
+
     os.makedirs(Config.IMAGES_DIR, exist_ok=True)
     deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
 
@@ -554,6 +616,8 @@ def generate_deck(
 
     # --- Validate API key ---
     if (analyze or generate_images) and not venice_key:
+        if not interactive:
+            raise ValueError("A Venice API key is required for analysis or image generation.")
         print("\n" + "=" * 60)
         print("  ERROR: Venice API key is required")
         print("=" * 60)
@@ -690,16 +754,30 @@ def generate_deck(
     # --- Resume: load existing deck and skip completed cards ---
     existing_cards = {}
     if resume:
-        from .storage import load_deck
         existing = load_deck(name)
         if existing:
             existing_cards = {c.position: c for c in existing}
+            card_defs = align_card_defs_with_existing(card_defs, existing_cards)
             logger.info(
                 f"Resuming: found {len(existing)} existing cards, "
                 f"will skip completed ones"
             )
 
+    # Remember the requested size so an interrupted run can be resumed in full
+    # (the per-card checkpoint would otherwise shrink num_cards in the index).
+    update_deck_meta(name, target_cards=len(card_defs), vibe=deck_vibe, theme=deck_prompt)
+
     stats = {"venice_success": 0, "venice_fail": 0, "image_success": 0, "image_fail": 0}
+
+    # Match the artist's symbols against the traditional archetypes ONCE,
+    # instead of once per card.
+    artist_analysis = None
+    if traditional_mode:
+        from .symbols import TraditionalDeckRegistry
+        artist_analysis = TraditionalDeckRegistry.match_artist_symbols(symbols_config["symbols"])
+
+    emit("deck_started", deck=name, num_cards=len(card_defs), vibe=deck_vibe,
+         theme=deck_prompt, deck_style=deck_style)
 
     iterator = range(len(card_defs))
     if HAS_TQDM:
@@ -726,12 +804,16 @@ def generate_deck(
                     stats["venice_success"] += 1
                 if has_image:
                     stats["image_success"] += 1
+                emit("card_skipped", position=position, title=existing_card.title,
+                     reason="already complete")
                 continue
 
+        emit("card_started", position=position, total=len(card_defs), title=card_def["title"])
         card = generate_card(
             position, num_cards, card_def, deck_vibe, deck_prompt,
             symbols=symbols_config["symbols"],
             traditional_mode=traditional_mode,
+            artist_analysis=artist_analysis,
         )
 
         # --- Refine prompt with LLM (style-aware) ---
@@ -745,6 +827,7 @@ def generate_deck(
             )
         else:
             card.prompt = build_card_prompt(card, deck_style)
+        emit("card_prompt", position=position, symbols=list(card.symbols), prompt=card.prompt)
 
         if analyze and venice_key:
             if HAS_TQDM:
@@ -757,6 +840,7 @@ def generate_deck(
                 stats["venice_success"] += 1
             else:
                 stats["venice_fail"] += 1
+            emit("card_analysis", position=position, result=result)
 
         if generate_images and venice_key:
             if HAS_TQDM:
@@ -782,27 +866,26 @@ def generate_deck(
                 stats["image_success"] += 1
             else:
                 stats["image_fail"] += 1
+            emit("card_image", position=position, image_path=card.image_path,
+                 error=card.image_error)
 
         deck.append(card)
+        # Checkpoint so a crash / cancelled job can be resumed without losing work.
+        # Keep cards not yet reached in this run (from a previous partial run).
+        checkpoint = deck + [
+            c for p, c in sorted(existing_cards.items()) if p > position
+        ]
+        save_deck(checkpoint, name, export=False)
+        emit("card_done", position=position, card=card.to_dict())
 
     save_deck(deck, name)
 
     # --- Finalize and persist usage stats ---
     tracker.finalize()
-    from .storage import load_decks_index
-    idx = load_decks_index()
-    meta = idx.get(name, {})
-    update_deck_index(
-        name, num_cards, vibe=deck_vibe, theme=deck_prompt,
-        back_image=meta.get("back_image"),
-        back_prompt=meta.get("back_prompt"),
-    )
-    # Write usage into index
-    idx = load_decks_index()
-    if name in idx:
-        idx[name]["usage"] = tracker.to_dict()
-        from .storage import save_decks_index
-        save_decks_index(idx)
+    update_deck_index(name, len(deck), vibe=deck_vibe, theme=deck_prompt)
+    update_deck_meta(name, usage=tracker.to_dict())
+    emit("deck_done", deck=name, num_cards=len(deck), stats=dict(stats),
+         usage=tracker.to_dict())
 
     if interactive:
         deck = interactive_review(
