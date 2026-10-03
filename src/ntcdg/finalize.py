@@ -6,6 +6,8 @@ CMYK color space, crop/trim marks, and bleed margins.
 Standard tarot card: 2.75" x 4.75" with 0.125" bleed on each side.
 """
 
+from __future__ import annotations
+
 import math
 import os
 import shutil
@@ -29,26 +31,29 @@ if HAS_REPORTLAB:
 
 
 # ==================== PRINT CONSTANTS ====================
-# Standard tarot card dimensions (inches)
+# Standard tarot card dimensions (inches) - 70mm x 120mm trim
 CARD_TRIM_W = 2.75
 CARD_TRIM_H = 4.75
-BLEED = 0.125  # per side
+BLEED = 0.125  # 1/8" per side
 
 CARD_BLEED_W = CARD_TRIM_W + 2 * BLEED  # 3.0"
 CARD_BLEED_H = CARD_TRIM_H + 2 * BLEED  # 5.0"
+TAROT_BLEED_ASPECT = CARD_BLEED_W / CARD_BLEED_H  # 3.0 / 5.0 = 0.60
 
-# Crop mark styling
-MARK_LENGTH = 0.25    # line length (inches)
-MARK_GAP = 0.0625     # gap between bleed edge and mark start
-MARK_LINE_W = 0.5     # line width (points)
+# Crop mark styling (high precision hairline marks)
+MARK_LENGTH = 0.20    # line length (inches) - fits cleanly within cell gaps
+MARK_GAP = 0.04       # gap between bleed edge and mark start (inches)
+MARK_LINE_W = 0.4     # hairline stroke width (points)
 
 # Sheet layout
-CELL_GAP = 0.25       # gap between card cells (1/4") — room for marks
+CELL_GAP = 0.25       # gap between card cells (1/4") — room for marks and double-cuts
 SHEET_MARGIN = 0.375  # page edge margin (inches)
 
 SHEET_SIZES = {
     "letter": (8.5, 11.0),
     "tabloid": (11.0, 17.0),
+    "a4": (8.27, 11.69),
+    "a3": (11.69, 16.54),
 }
 
 
@@ -111,42 +116,134 @@ def _calculate_grid(sheet_w_in: float, sheet_h_in: float) -> dict:
     }
 
 
-# ==================== CROP MARKS ====================
-def _draw_crop_marks(c, trim_x, trim_y, trim_w, trim_h):
+# ==================== CROP MARKS & SHEET GUIDES ====================
+def _draw_crop_marks(
+    c,
+    trim_x: float,
+    trim_y: float,
+    trim_w: float,
+    trim_h: float,
+    gutter_right: bool = False,
+    gutter_left: bool = False,
+    gutter_top: bool = False,
+    gutter_bottom: bool = False,
+):
     """
-    Draw crop marks at all 4 corners of a card's trim area.
+    Draw precision crop marks at all 4 corners of a card's trim area.
 
-    Marks sit outside the bleed area, indicating where to cut.
+    Marks sit outside the bleed area, indicating exactly where to cut.
+    Gutter constraints prevent marks from overlapping between adjacent cards.
     """
     bleed_pt = BLEED * inch
-    mark_len = MARK_LENGTH * inch
     gap_pt = MARK_GAP * inch
+    base_mark_len = MARK_LENGTH * inch
 
-    c.setStrokeColorCMYK(0, 0, 0, 1)  # Registration black
+    # Gutter clamp: half of cell gap minus bleed to avoid collision
+    gutter_limit = max(0.08 * inch, (CELL_GAP * inch + 2 * bleed_pt) / 2 - gap_pt - 1)
+    len_r = min(base_mark_len, gutter_limit) if gutter_right else base_mark_len
+    len_l = min(base_mark_len, gutter_limit) if gutter_left else base_mark_len
+    len_t = min(base_mark_len, gutter_limit) if gutter_top else base_mark_len
+    len_b = min(base_mark_len, gutter_limit) if gutter_bottom else base_mark_len
+
+    c.setStrokeColorCMYK(0, 0, 0, 1)  # Registration / Key black
     c.setLineWidth(MARK_LINE_W)
 
-    # (corner_x, corner_y, horizontal_direction, vertical_direction)
+    # (corner_x, corner_y, horizontal_direction, vertical_direction, h_len, v_len)
     corners = [
-        (trim_x, trim_y, -1, -1),                           # bottom-left
-        (trim_x + trim_w, trim_y, 1, -1),                   # bottom-right
-        (trim_x, trim_y + trim_h, -1, 1),                   # top-left
-        (trim_x + trim_w, trim_y + trim_h, 1, 1),           # top-right
+        (trim_x, trim_y, -1, -1, len_l, len_b),                     # bottom-left
+        (trim_x + trim_w, trim_y, 1, -1, len_r, len_b),             # bottom-right
+        (trim_x, trim_y + trim_h, -1, 1, len_l, len_t),             # top-left
+        (trim_x + trim_w, trim_y + trim_h, 1, 1, len_r, len_t),     # top-right
     ]
 
-    for cx, cy, hd, vd in corners:
-        # Horizontal mark — extends outward from corner
+    for cx, cy, hd, vd, h_len, v_len in corners:
+        # Horizontal mark — strictly on line y = cy
         h_start = cx + hd * (bleed_pt + gap_pt)
-        c.line(h_start, cy, h_start + hd * mark_len, cy)
-        # Vertical mark
+        c.line(h_start, cy, h_start + hd * h_len, cy)
+        # Vertical mark — strictly on line x = cx
         v_start = cy + vd * (bleed_pt + gap_pt)
-        c.line(cx, v_start, cx, v_start + vd * mark_len)
+        c.line(cx, v_start, cx, v_start + vd * v_len)
+
+
+def _draw_sheet_guides(
+    c, layout: dict, sheet_w_in: float, sheet_h_in: float,
+):
+    """
+    Draw continuous cutting guide ticks and registration marks at sheet margins.
+
+    Printers and artists using a guillotine or straightedge ruler can align
+    across the entire sheet for straight, continuous cuts without losing reference.
+    """
+    sheet_w = sheet_w_in * inch
+    sheet_h = sheet_h_in * inch
+
+    c.setStrokeColorCMYK(0, 0, 0, 1)
+    c.setLineWidth(0.4)
+
+    # Collect all unique vertical trim lines (x coordinates)
+    v_cuts = []
+    for col in range(layout["cols"]):
+        b_x = (layout["start_x"] + col * (CARD_BLEED_W + CELL_GAP)) * inch
+        t_left = b_x + BLEED * inch
+        t_right = t_left + CARD_TRIM_W * inch
+        v_cuts.extend([t_left, t_right])
+
+    # Collect all unique horizontal trim lines (y coordinates)
+    h_cuts = []
+    for row in range(layout["rows"]):
+        b_y = (
+            sheet_h_in
+            - layout["start_y"]
+            - (row + 1) * CARD_BLEED_H
+            - row * CELL_GAP
+        ) * inch
+        t_bottom = b_y + BLEED * inch
+        t_top = t_bottom + CARD_TRIM_H * inch
+        h_cuts.extend([t_bottom, t_top])
+
+    # Margin tick length
+    tick_len = 0.18 * inch
+
+    # Vertical cut ticks at sheet top and bottom margins
+    for x in set(v_cuts):
+        # Bottom edge
+        c.line(x, 0.04 * inch, x, 0.04 * inch + tick_len)
+        # Top edge
+        c.line(x, sheet_h - 0.04 * inch, x, sheet_h - 0.04 * inch - tick_len)
+
+    # Horizontal cut ticks at sheet left and right margins
+    for y in set(h_cuts):
+        # Left edge
+        c.line(0.04 * inch, y, 0.04 * inch + tick_len, y)
+        # Right edge
+        c.line(sheet_w - 0.04 * inch, y, sheet_w - 0.04 * inch - tick_len, y)
+
+    # Registration crosshairs at center of sheet edges
+    def _draw_registration_target(cx, cy):
+        r = 5
+        c.setLineWidth(0.3)
+        c.circle(cx, cy, r, stroke=1, fill=0)
+        c.line(cx - r - 3, cy, cx + r + 3, cy)
+        c.line(cx, cy - r - 3, cx, cy + r + 3)
+
+    _draw_registration_target(sheet_w / 2, 0.18 * inch)
+    _draw_registration_target(sheet_w / 2, sheet_h - 0.18 * inch)
+    _draw_registration_target(0.18 * inch, sheet_h / 2)
+    _draw_registration_target(sheet_w - 0.18 * inch, sheet_h / 2)
 
 
 # ==================== IMAGE PREPARATION ====================
-def _prepare_image(image_path: str, color_mode: str, tmp_dir: str) -> str:
+def _prepare_image(
+    image_path: str,
+    color_mode: str,
+    tmp_dir: str,
+    target_aspect: float = TAROT_BLEED_ASPECT,
+) -> str:
     """
     Convert card image for print output.
 
+    - Crops to exact bleed aspect ratio (3.0 / 5.0) via center-crop so artwork
+      fills the entire bleed rectangle without pillarbox/letterbox gaps.
     - color_mode "bw": convert to grayscale then CMYK
     - color_mode "color": convert RGB → CMYK
     - Saves as CMYK JPEG in tmp_dir
@@ -162,6 +259,20 @@ def _prepare_image(image_path: str, color_mode: str, tmp_dir: str) -> str:
         if img.mode in ("RGBA", "LA"):
             bg.paste(img, mask=img.split()[-1])
             img = bg
+
+    # Crop to exact bleed aspect ratio if necessary
+    if target_aspect:
+        w, h = img.size
+        current_aspect = w / h
+        if abs(current_aspect - target_aspect) > 0.005:
+            if current_aspect > target_aspect:
+                new_w = int(round(h * target_aspect))
+                offset = (w - new_w) // 2
+                img = img.crop((offset, 0, offset + new_w, h))
+            else:
+                new_h = int(round(w / target_aspect))
+                offset = (h - new_h) // 2
+                img = img.crop((0, offset, w, offset + new_h))
 
     if color_mode == "bw":
         img = img.convert("L").convert("RGB").convert("CMYK")
@@ -186,13 +297,13 @@ def create_print_pdf(
     """
     Generate a print-ready CMYK PDF with sequential cards on sheets.
 
-    Layout packs as many cards as possible per sheet with crop marks
-    at each card's trim corners for easy cutting.
+    Layout packs as many cards as possible per sheet with high-precision
+    crop marks and margin cutting guides for easy trimming.
 
     Args:
         deck: List of Card objects.
         deck_name: Name for the output file.
-        sheet_size: "letter" (8.5x11) or "tabloid" (11x17).
+        sheet_size: "letter" (8.5x11), "tabloid" (11x17), "a4", or "a3".
         color_mode: "color" or "bw" (both produce CMYK output).
 
     Returns:
@@ -247,6 +358,9 @@ def create_print_pdf(
             start = page_idx * cards_per_page
             page_cards = printable[start : start + cards_per_page]
 
+            # Draw sheet-level continuous cutting guides at margins
+            _draw_sheet_guides(c, layout, sheet_w_in, sheet_h_in)
+
             for i, card in enumerate(page_cards):
                 row = i // layout["cols"]
                 col = i % layout["cols"]
@@ -264,30 +378,39 @@ def create_print_pdf(
                 bleed_x = bleed_x_in * inch
                 bleed_y = bleed_y_in * inch
 
-                # Prepare CMYK image
+                # Prepare CMYK image cropped to exact bleed aspect ratio
                 try:
                     img_path = _prepare_image(card.image_path, color_mode, tmp_dir)
                 except Exception as e:
                     logger.warning(f"Image prep failed for card {card.position}: {e}")
                     continue
 
-                # Draw card image (scaled to fill bleed area)
+                # Draw card image (filling the full bleed area edge-to-edge)
                 c.drawImage(
                     img_path,
                     bleed_x,
                     bleed_y,
                     width=CARD_BLEED_W * inch,
                     height=CARD_BLEED_H * inch,
-                    preserveAspectRatio=True,
-                    anchor="c",
+                    preserveAspectRatio=False,
                 )
 
-                # Draw crop marks at trim corners
+                # Draw precision crop marks at trim corners
                 trim_x = bleed_x + BLEED * inch
                 trim_y = bleed_y + BLEED * inch
-                _draw_crop_marks(c, trim_x, trim_y, CARD_TRIM_W * inch, CARD_TRIM_H * inch)
+                _draw_crop_marks(
+                    c,
+                    trim_x,
+                    trim_y,
+                    CARD_TRIM_W * inch,
+                    CARD_TRIM_H * inch,
+                    gutter_right=(col < layout["cols"] - 1),
+                    gutter_left=(col > 0),
+                    gutter_top=(row > 0),
+                    gutter_bottom=(row < layout["rows"] - 1),
+                )
 
-            # Page footer
+            # Page footer with scale and trim metadata
             c.setFont("Helvetica", 7)
             c.setFillColorCMYK(0, 0, 0, 0.5)
             c.drawCentredString(
@@ -295,7 +418,7 @@ def create_print_pdf(
                 SHEET_MARGIN * inch * 0.4,
                 f"{deck_name}  ·  Page {page_idx + 1}/{total_pages}  ·  "
                 f"{sheet_size.title()}  ·  {color_mode.upper()} CMYK  ·  "
-                f"Card {CARD_TRIM_W}\" x {CARD_TRIM_H}\" + {BLEED}\" bleed",
+                f"Trim: {CARD_TRIM_W}\" x {CARD_TRIM_H}\" (70x120mm) + {BLEED}\" bleed",
             )
 
             c.showPage()
@@ -315,14 +438,13 @@ def create_backs_pdf(
     back_image_path: str,
     sheet_size: str = "letter",
     color_mode: str = "color",
+    duplex_flip: str = "long_edge",
 ) -> str:
     """
     Generate a print-ready PDF of card backs.
 
-    Same grid layout as the fronts PDF so pages align for
-    double-sided printing. The back image fills the entire
-    bleed area edge-to-edge (no borders). Crop marks are
-    included for cutting alignment.
+    Matches the grid layout of the fronts PDF. Supports 'long_edge' duplex flip
+    mirroring so double-sided printing aligns backs and fronts exactly.
     """
     if not HAS_REPORTLAB or not HAS_PILLOW:
         logger.error("reportlab and Pillow required for backs PDF")
@@ -354,16 +476,21 @@ def create_backs_pdf(
     tmp_dir = tempfile.mkdtemp(prefix="ntcdg_backs_")
 
     try:
-        # Prepare the single back image (converted to CMYK)
+        # Prepare the single back image (converted to CMYK and cropped to bleed aspect)
         back_img = _prepare_image(back_image_path, color_mode, tmp_dir)
 
         for page_idx in range(total_pages):
             remaining = num_cards - page_idx * cards_per_page
             slots = min(cards_per_page, remaining)
 
+            # Draw sheet-level continuous cutting guides at margins
+            _draw_sheet_guides(c, layout, sheet_w_in, sheet_h_in)
+
             for i in range(slots):
                 row = i // layout["cols"]
-                col = i % layout["cols"]
+                front_col = i % layout["cols"]
+                # For long-edge duplex flipping, mirror columns horizontally so back aligns with front
+                col = (layout["cols"] - 1 - front_col) if duplex_flip == "long_edge" else front_col
 
                 bleed_x_in = layout["start_x"] + col * (CARD_BLEED_W + CELL_GAP)
                 bleed_y_in = (
@@ -389,7 +516,17 @@ def create_backs_pdf(
                 # Crop marks for cutting alignment
                 trim_x = bleed_x + BLEED * inch
                 trim_y = bleed_y + BLEED * inch
-                _draw_crop_marks(c, trim_x, trim_y, CARD_TRIM_W * inch, CARD_TRIM_H * inch)
+                _draw_crop_marks(
+                    c,
+                    trim_x,
+                    trim_y,
+                    CARD_TRIM_W * inch,
+                    CARD_TRIM_H * inch,
+                    gutter_right=(col < layout["cols"] - 1),
+                    gutter_left=(col > 0),
+                    gutter_top=(row > 0),
+                    gutter_bottom=(row < layout["rows"] - 1),
+                )
 
             # Page footer
             c.setFont("Helvetica", 7)
@@ -398,7 +535,8 @@ def create_backs_pdf(
                 sheet_w / 2,
                 SHEET_MARGIN * inch * 0.4,
                 f"{deck_name} BACKS  -  Page {page_idx + 1}/{total_pages}  -  "
-                f"{sheet_size.title()}  -  {color_mode.upper()} CMYK",
+                f"{sheet_size.title()}  -  {color_mode.upper()} CMYK  -  "
+                f"Duplex: {duplex_flip.title()}",
             )
 
             c.showPage()

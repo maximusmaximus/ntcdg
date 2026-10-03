@@ -244,3 +244,58 @@ class TestBacksPdf:
         assert pdf_path
         # The PDF was created — page count is validated by the grid math
         assert expected_pages == 20  # 78 cards / 4 per letter = 20 pages
+
+
+class TestPrecisionPrintFeatures:
+    """Test precision crop marks, cutting guides, and aspect cropping."""
+
+    def test_a4_and_a3_layouts(self):
+        """A4 and A3 sheets should calculate valid grids."""
+        from ntcdg.finalize import SHEET_SIZES, _calculate_grid
+
+        assert "a4" in SHEET_SIZES
+        assert "a3" in SHEET_SIZES
+
+        a4_layout = _calculate_grid(*SHEET_SIZES["a4"])
+        assert a4_layout["cols"] == 2
+        assert a4_layout["rows"] == 2
+        assert a4_layout["cards_per_page"] == 4
+
+        a3_layout = _calculate_grid(*SHEET_SIZES["a3"])
+        assert a3_layout["cols"] == 3
+        assert a3_layout["rows"] == 3
+        assert a3_layout["cards_per_page"] == 9
+
+    def test_prepare_image_bleed_aspect_crop(self, tmp_path):
+        """_prepare_image should crop non-3:5 images to exact 0.60 bleed aspect ratio."""
+        from PIL import Image as PILImage
+
+        from ntcdg.finalize import TAROT_BLEED_ASPECT, _prepare_image
+
+        # Square 1000x1000 image (aspect 1.0)
+        img = PILImage.new("RGB", (1000, 1000), color=(100, 150, 200))
+        img_path = str(tmp_path / "square_card.png")
+        img.save(img_path)
+
+        out_path = _prepare_image(img_path, "color", str(tmp_path))
+        assert os.path.exists(out_path)
+
+        out_img = PILImage.open(out_path)
+        out_w, out_h = out_img.size
+        ratio = out_w / out_h
+        assert abs(ratio - TAROT_BLEED_ASPECT) < 0.005
+        assert abs(ratio - 0.60) < 0.005
+
+    def test_draw_sheet_guides_renders(self):
+        """_draw_sheet_guides should execute and draw cutting ticks on canvas."""
+        from unittest.mock import MagicMock
+
+        from ntcdg.finalize import _calculate_grid, _draw_sheet_guides
+
+        mock_canvas = MagicMock()
+        layout = _calculate_grid(8.5, 11.0)
+        _draw_sheet_guides(mock_canvas, layout, 8.5, 11.0)
+
+        # Lines drawn for ticks, targets, and crosshairs
+        assert mock_canvas.line.call_count >= 16
+        assert mock_canvas.circle.call_count == 4

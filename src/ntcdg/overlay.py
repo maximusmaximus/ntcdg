@@ -6,6 +6,8 @@ relying on AI text rendering (which is unreliable) and guarantees
 uniform placement across the entire deck.
 """
 
+from __future__ import annotations
+
 import os
 
 from .config import logger
@@ -254,11 +256,14 @@ def compose_card(
     frame_color: tuple = (200, 180, 130),  # warm gold
     bg_color: tuple = (10, 10, 10),  # near black
     text_color: tuple = (212, 195, 150),  # gold text
+    canvas_size: tuple[int, int] = (768, 1280),  # Standard 3:5 tarot bleed ratio
 ) -> None:
     """Compose a framed tarot card with decorative border and title.
 
     Modifies the image file in-place, adding an art deco style frame,
-    corner ornaments, and a title panel at the bottom.
+    corner ornaments, and a title panel. The layout strictly observes
+    standard tarot card dimensions (2.75" x 4.75" trim inside 3.0" x 5.0" bleed)
+    with safe zone margins so cutting along crop marks never clips the borders.
     """
     if not HAS_PILLOW:
         logger.warning("Pillow not installed — skipping card composition")
@@ -268,23 +273,30 @@ def compose_card(
         logger.warning(f"Image not found for composition: {image_path}")
         return
 
-    # Base canvas (832x1280)
-    canvas_w, canvas_h = 832, 1280
+    # Base canvas (768x1280 standard tarot 3:5 bleed ratio)
+    canvas_w, canvas_h = canvas_size
     canvas = Image.new("RGB", (canvas_w, canvas_h), bg_color)
     draw = ImageDraw.Draw(canvas)
 
-    # Outer frame
-    draw.rectangle([0, 0, canvas_w - 1, canvas_h - 1], outline=frame_color, width=2)
+    # Bleed calculation (0.125" bleed per side on 3.0" card = ~4.17% of width)
+    bleed_px = int(round(canvas_w * (0.125 / 3.0)))  # 32px on 768w canvas
 
-    # Inner border line (16px margin)
-    inner_margin = 16
+    # Outer frame is drawn inside the safe area (16px inside the trim cut line)
+    frame_margin = bleed_px + 16
+    draw.rectangle(
+        [frame_margin, frame_margin, canvas_w - frame_margin - 1, canvas_h - frame_margin - 1],
+        outline=frame_color, width=2,
+    )
+
+    # Inner border line (10px inside outer frame)
+    inner_margin = frame_margin + 10
     inner_color = (160, 140, 100)
     draw.rectangle([
         inner_margin, inner_margin,
         canvas_w - inner_margin - 1, canvas_h - inner_margin - 1
     ], outline=inner_color, width=1)
 
-    # Corner ornaments
+    # Corner ornaments inside inner border
     ornament_size = 10
     _draw_corner_ornament(draw, inner_margin + 4, inner_margin + 4, ornament_size, inner_color, "top_left")
     _draw_corner_ornament(
@@ -300,32 +312,33 @@ def compose_card(
         ornament_size, inner_color, "bottom_right"
     )
 
-    # Artwork area
-    art_x, art_y = 20, 20
-    title_height = 110
-    art_w = canvas_w - 40
-    art_h = canvas_h - 40 - title_height
+    # Artwork area inside the frame
+    art_x = inner_margin + 4
+    art_y = inner_margin + 4
+    title_height = int(canvas_h * 0.086)  # ~110px on 1280h
+    art_w = canvas_w - 2 * art_x
+    art_h = canvas_h - art_y - frame_margin - 12 - title_height
 
-    # Load and resize artwork
+    # Load and resize artwork to fill art box
     img = Image.open(image_path).convert("RGB")
     art_img = _crop_to_fill(img, art_w, art_h)
     canvas.paste(art_img, (art_x, art_y))
 
-    # Inner border around artwork itself to make it pop
+    # Inner border around artwork itself
     draw.rectangle([art_x - 1, art_y - 1, art_x + art_w, art_y + art_h], outline=inner_color, width=1)
 
-    # Decorative separator
-    separator_y = art_y + art_h + 15
+    # Decorative separator between artwork and title panel
+    separator_y = art_y + art_h + 14
     _draw_separator(draw, separator_y, canvas_w, inner_color)
 
     # Title panel text
-    title_font_size = 32
-    number_font_size = 20
+    title_font_size = max(22, int(canvas_h * 0.025))
+    number_font_size = max(14, int(canvas_h * 0.016))
     title_font = _find_font(font_path, size=title_font_size)
     number_font = _find_font(font_path, size=number_font_size)
 
     # Draw Title
-    title_y = separator_y + 35
+    title_y = separator_y + int(title_height * 0.32)
     _draw_text_with_shadow(
         draw, title.upper(),
         position=(canvas_w // 2, title_y),
@@ -345,7 +358,7 @@ def compose_card(
 
     _draw_text_with_shadow(
         draw, subtitle.upper(),
-        position=(canvas_w // 2, title_y + 35),
+        position=(canvas_w // 2, title_y + int(title_height * 0.32)),
         font=number_font, fill=number_color,
         shadow_offset=1,
     )
