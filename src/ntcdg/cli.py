@@ -3,6 +3,7 @@
 import argparse
 import os
 import re
+import sys
 
 from .config import Config, setup_logging
 from .userconfig import apply_config_defaults, load_user_config
@@ -355,6 +356,34 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             meta.get("target_cards") or meta.get("num_cards")
             or len(load_deck(args.retry_failed))
         )
+        explicit_argv = set(sys.argv[1:])
+        retry_symbol_mode = (
+            args.symbol_mode
+            if "--symbol-mode" in explicit_argv
+            else (meta.get("symbol_mode") or args.symbol_mode)
+        )
+        saved_sf = meta.get("symbols_file") or ""
+        retry_symbols_file = args.symbols_file or (saved_sf if os.path.exists(saved_sf) else None)
+        retry_traditional = (
+            args.traditional
+            if ("--traditional" in explicit_argv or "--no-traditional" in explicit_argv)
+            else bool(meta.get("traditional_mode", True))
+        )
+        retry_text_model = (
+            args.venice_text_model
+            if "--venice-text-model" in explicit_argv
+            else (meta.get("text_model") or args.venice_text_model)
+        )
+        retry_image_model = (
+            args.venice_image_model
+            if "--venice-image-model" in explicit_argv
+            else (meta.get("image_model") or args.venice_image_model)
+        )
+        retry_image_size = (
+            args.image_size
+            if "--image-size" in explicit_argv
+            else (meta.get("image_size") or args.image_size)
+        )
         print(f"\nRetrying failed cards in '{args.retry_failed}'...")
         generate_deck(
             name=args.retry_failed,
@@ -363,16 +392,17 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
             deck_prompt=args.deck_prompt or meta.get("theme", ""),
             venice_key=venice_key,
             analyze=True,
-            text_model=args.venice_text_model,
+            text_model=retry_text_model,
             generate_images=True,
-            image_model=args.venice_image_model,
-            image_size=args.image_size,
-            negative_prompt=args.negative_prompt,
+            image_model=retry_image_model,
+            image_size=retry_image_size,
+            negative_prompt=args.negative_prompt or meta.get("negative_prompt", ""),
             rate_limit=args.rate_limit,
             interactive=not args.no_interactive,
-            symbol_mode=args.symbol_mode,
-            symbols_file=args.symbols_file,
+            symbol_mode=retry_symbol_mode,
+            symbols_file=retry_symbols_file,
             font_path=args.font,
+            traditional_mode=retry_traditional,
             resume=True,  # resume mode skips completed cards
             preview=False,  # no preview for retries
         )

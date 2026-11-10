@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 import os
-import tempfile
 
 from .config import HAS_REPORTLAB, Config, logger
 from .models import Card
@@ -468,14 +467,17 @@ def _bk_draw_cover(c, deck_name: str, deck, num_cards: int):
     )
     if cover_card and HAS_PILLOW:
         try:
+            import io
+
             from PIL import ImageEnhance
-            img = Image.open(cover_card.image_path)
-            img = ImageEnhance.Brightness(img).enhance(0.3)
-            tmp = os.path.join(tempfile.gettempdir(), "ntcdg_cover_tmp.jpg")
-            img.convert("RGB").save(tmp, "JPEG", quality=80)
-            c.drawImage(tmp, 0, 0, width=_BK_W, height=_BK_H,
+            from reportlab.lib.utils import ImageReader
+            with Image.open(cover_card.image_path) as raw_img:
+                faded = ImageEnhance.Brightness(raw_img.convert("RGB")).enhance(0.3)
+                buf = io.BytesIO()
+                faded.save(buf, "JPEG", quality=80)
+                buf.seek(0)
+            c.drawImage(ImageReader(buf), 0, 0, width=_BK_W, height=_BK_H,
                         preserveAspectRatio=True, anchor="c")
-            os.remove(tmp)
         except Exception:
             pass  # Fall back to solid background
 
@@ -845,10 +847,12 @@ def finalize_deck_report(
 
     # --- Public identity / QR codes ---
     urls: dict[int, str] = {}
+    publish_on_success = False
     if qr_codes:
         from .public import card_urls, ensure_public_identity
         identity = ensure_public_identity(
-            deck_name, public_base_url, rebase=rebase_url, allow_local=allow_local_url,
+            deck_name, public_base_url, rebase=rebase_url,
+            allow_local=allow_local_url, publish=False,
         )
         result["warnings"].extend(identity["warnings"])
         result["qr"] = {
@@ -857,6 +861,7 @@ def finalize_deck_report(
         }
         if identity["enabled"]:
             urls = card_urls(identity, printable)
+            publish_on_success = True
             print(f"QR codes: {identity['base_url']} (deck slug {identity['slug']})")
         else:
             print(f"QR codes skipped: {identity['reason']}")
@@ -898,6 +903,9 @@ def finalize_deck_report(
         result["error"] = "Print PDFs could not be generated (are reportlab and Pillow installed?)"
 
     if result["success"]:
+        if publish_on_success:
+            from .storage import update_deck_meta
+            update_deck_meta(deck_name, published=True)
         print(f"\n{'=' * 60}")
         print(f"FINALIZED: {deck_name}")
         print(f"   Duplex PDF: {duplex_path}  <- print this 2-sided, flip on "

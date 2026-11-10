@@ -4,13 +4,116 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import json
 import os
 import re
+import threading
 import time
 from typing import Any
 
-from .config import Config, logger, requests, retry_on_failure
+from .config import RETRYABLE_STATUS_CODES, Config, _requests, logger, requests
 from .models import Card
+
+_SESSION_LOCAL = threading.local()
+
+
+def _http_post_callable():
+    """Return a thread-local ``requests.Session().post`` or a test-patched ``requests.post``."""
+    if requests is None:
+        return None
+    if _requests is not None and requests is _requests:
+        sess = getattr(_SESSION_LOCAL, "session", None)
+        if sess is None:
+            sess = _requests.Session()
+            _SESSION_LOCAL.session = sess
+        return sess.post
+    return requests.post
+
+
+def venice_post(
+    url: str,
+    api_key: str,
+    json_payload: dict[str, Any],
+    *,
+    timeout: float = 90,
+    max_retries: int = 2,
+    initial_delay: float = 1.5,
+    backoff: float = 2.0,
+):
+    """POST to a Venice endpoint with connection pooling, 429 Retry-After, and 5xx retries.
+
+    Permanent client errors (400/401/402/403/404/422) fail immediately without retrying.
+    """
+    post_fn = _http_post_callable()
+    if post_fn is None:
+        raise RuntimeError("Missing requests library")
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    current_delay = initial_delay
+    last_exc: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            resp = post_fn(url, headers=headers, json=json_payload, timeout=timeout)
+            raw_status = getattr(resp, "status_code", 200)
+            status = raw_status if isinstance(raw_status, int) else 200
+            if status in RETRYABLE_STATUS_CODES and attempt < max_retries:
+                if status == 429:
+                    retry_after = getattr(resp, "headers", {}).get("Retry-After")
+                    if retry_after:
+                        with contextlib.suppress(ValueError, TypeError):
+                            current_delay = max(float(retry_after), current_delay)
+                logger.warning(
+                    f"Venice HTTP {status} on {url} (attempt {attempt + 1}/{max_retries + 1}); "
+                    f"retrying in {current_delay:.1f}s..."
+                )
+                time.sleep(current_delay)
+                current_delay *= backoff
+                continue
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            last_exc = e
+            err_resp = getattr(e, "response", None)
+            raw_err_status = getattr(err_resp, "status_code", 0) if err_resp is not None else 0
+            err_status = raw_err_status if isinstance(raw_err_status, int) else 0
+            if 400 <= err_status < 500 and err_status not in RETRYABLE_STATUS_CODES:
+                raise
+            if err_status == 429 and err_resp is not None:
+                retry_after = getattr(err_resp, "headers", {}).get("Retry-After")
+                if retry_after:
+                    with contextlib.suppress(ValueError, TypeError):
+                        current_delay = max(float(retry_after), current_delay)
+            if attempt < max_retries:
+                logger.warning(
+                    f"Venice request failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                    f"Retrying in {current_delay:.1f}s..."
+                )
+                time.sleep(current_delay)
+                current_delay *= backoff
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
+
+
+def parse_json_response(raw: str) -> dict[str, Any]:
+    """Extract and parse a JSON object from an LLM text response (stripping code fences)."""
+    match = re.search(r"```(?:json)?\s*(.*?)```", raw, re.DOTALL)
+    candidate = match.group(1).strip() if match else raw.strip()
+    try:
+        parsed = json.loads(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end > start:
+            parsed = json.loads(candidate[start : end + 1])
+            if isinstance(parsed, dict):
+                return parsed
+        raise
+    raise ValueError("Expected a JSON object from Venice model")
 
 
 def _parse_image_size(image_size: str) -> tuple[int, int]:
@@ -83,7 +186,6 @@ def _extract_text_content(resp_json: dict) -> str:
 
 
 # ==================== TEXT ANALYSIS ====================
-@retry_on_failure(max_retries=2, delay=1.5)
 def analyze_with_venice(
     card: Card, api_key: str, model: str, tracker=None,
 ) -> dict[str, Any]:
@@ -123,13 +225,7 @@ Return a JSON object with these fields:
             "temperature": 0.7,
             "max_tokens": 4000,
         }
-        resp = requests.post(
-            Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
-            timeout=90,
-        )
-        resp.raise_for_status()
+        resp = venice_post(Config.VENICE_TEXT_URL, api_key, payload, timeout=90)
         resp_json = resp.json()
         raw = _extract_text_content(resp_json)
 
@@ -147,11 +243,7 @@ Return a JSON object with these fields:
                 purpose="analysis",
             )
 
-        # Strip code fences if present
-        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-        content = match.group(1).strip() if match else raw
-        import json
-        analysis = json.loads(content)
+        analysis = parse_json_response(raw)
         analysis["venice_text_model"] = model
         return analysis
     except Exception as e:
@@ -162,7 +254,6 @@ Return a JSON object with these fields:
 
 
 # ==================== IMAGE GENERATION ====================
-@retry_on_failure(max_retries=2, delay=2.0)
 def generate_image_with_venice(
     card: Card,
     api_key: str,
@@ -195,15 +286,13 @@ def generate_image_with_venice(
     try:
         # === GENERATE MODE (default) ===
         if symbol_mode == "generate" or not symbol_images:
-            resp = requests.post(
+            resp = venice_post(
                 Config.VENICE_IMAGE_URL,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=_build_image_request(
-                    model, full_prompt, image_size, neg_prompt,
-                ),
+                api_key,
+                _build_image_request(model, full_prompt, image_size, neg_prompt),
                 timeout=180,
+                initial_delay=2.0,
             )
-            resp.raise_for_status()
             data = resp.json()
 
             b64 = _extract_image_b64(data)
@@ -214,28 +303,26 @@ def generate_image_with_venice(
                 filepath = os.path.join(images_dir, filename)
                 with open(filepath, "wb") as f:
                     f.write(img_data)
-                    if tracker:
-                        tracker.record_image_call(
-                            model, image_size, success=True,
-                        )
-                    return {
-                        "image_path": filepath,
-                        "image_model": model,
-                        "image_size": image_size,
-                        "symbol_mode": "generate",
-                    }
+                if tracker:
+                    tracker.record_image_call(
+                        model, image_size, success=True,
+                    )
+                return {
+                    "image_path": filepath,
+                    "image_model": model,
+                    "image_size": image_size,
+                    "symbol_mode": "generate",
+                }
 
         # === PROVIDE MODE ===
         else:
-            base_resp = requests.post(
+            base_resp = venice_post(
                 Config.VENICE_IMAGE_URL,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=_build_image_request(
-                    model, full_prompt, image_size, neg_prompt,
-                ),
+                api_key,
+                _build_image_request(model, full_prompt, image_size, neg_prompt),
                 timeout=180,
+                initial_delay=2.0,
             )
-            base_resp.raise_for_status()
             base_data = base_resp.json()
 
             b64 = _extract_image_b64(base_data)
@@ -297,7 +384,6 @@ def generate_image_with_venice(
 
 
 # ==================== IMAGE EDITING ====================
-@retry_on_failure(max_retries=2, delay=2.0)
 def edit_image_with_venice(
     base_image_path: str,
     edit_prompt: str,
@@ -335,13 +421,13 @@ def edit_image_with_venice(
             "enhance_prompt": enhance_prompt,
         }
 
-        resp = requests.post(
+        resp = venice_post(
             Config.VENICE_EDIT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=payload,
+            api_key,
+            payload,
             timeout=180,
+            initial_delay=2.0,
         )
-        resp.raise_for_status()
 
         final_path = base_image_path.replace(".png", "_edited.png")
 
@@ -373,8 +459,8 @@ def edit_image_with_venice(
         logger.error(f"Image edit failed: {e}")
         return {"image_error": str(e)}
 
+
 # ==================== CARD BACK GENERATION ====================
-@retry_on_failure(max_retries=2, delay=2.0)
 def generate_card_back(
     prompt: str,
     api_key: str,
@@ -398,15 +484,13 @@ def generate_card_back(
     neg = negative_prompt or Config.DEFAULT_NEGATIVE_PROMPT
 
     try:
-        resp = requests.post(
+        resp = venice_post(
             Config.VENICE_IMAGE_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=_build_image_request(
-                model, prompt, image_size, neg,
-            ),
+            api_key,
+            _build_image_request(model, prompt, image_size, neg),
             timeout=180,
+            initial_delay=2.0,
         )
-        resp.raise_for_status()
         data = resp.json()
 
         b64 = _extract_image_b64(data)

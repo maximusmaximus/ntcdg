@@ -35,8 +35,8 @@ def _atomic_write_json(path: str, data: Any) -> None:
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
@@ -55,7 +55,7 @@ def load_decks_index() -> dict[str, Any]:
     with _INDEX_LOCK:
         if os.path.exists(index_file):
             try:
-                with open(index_file) as f:
+                with open(index_file, encoding="utf-8") as f:
                     return json.load(f)
             except json.JSONDecodeError as e:
                 logger.error(f"Deck index is corrupt ({index_file}): {e}")
@@ -257,7 +257,7 @@ def load_deck(deck_name: str) -> list[Card]:
     validate_deck_name(deck_name)
     json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
     if os.path.exists(json_path):
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             raw = json.load(f)
         return [Card.from_dict(d) for d in raw]
     return []
@@ -343,7 +343,7 @@ def save_deck(deck: list[Card], deck_name: str, *, export: bool = True):
 # ==================== HISTORY ====================
 def load_history() -> dict[str, Any]:
     if os.path.exists(Config.HISTORY_FILE):
-        with open(Config.HISTORY_FILE) as f:
+        with open(Config.HISTORY_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"cards": [], "decks": []}
 

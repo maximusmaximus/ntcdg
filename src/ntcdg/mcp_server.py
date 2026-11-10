@@ -324,6 +324,9 @@ def retry_failed(deck_name: str) -> dict[str, Any]:
     index = load_decks_index()
     meta = index.get(deck_name, {})
     target = meta.get("target_cards") or meta.get("num_cards") or len(load_deck(deck_name))
+    saved_sf = meta.get("symbols_file") or ""
+    if saved_sf and not os.path.exists(saved_sf):
+        saved_sf = ""
 
     generate_deck(
         name=deck_name,
@@ -332,13 +335,16 @@ def retry_failed(deck_name: str) -> dict[str, Any]:
         deck_prompt=meta.get("theme", ""),
         venice_key=venice_key,
         analyze=True,
-        text_model=Config.DEFAULT_TEXT_MODEL,
+        text_model=meta.get("text_model") or Config.DEFAULT_TEXT_MODEL,
         generate_images=True,
-        image_model=Config.DEFAULT_IMAGE_MODEL,
-        image_size=Config.DEFAULT_IMAGE_SIZE,
-        negative_prompt="",
+        image_model=meta.get("image_model") or Config.DEFAULT_IMAGE_MODEL,
+        image_size=meta.get("image_size") or Config.DEFAULT_IMAGE_SIZE,
+        negative_prompt=meta.get("negative_prompt") or "",
         rate_limit=1.5,
         interactive=False,
+        symbol_mode=meta.get("symbol_mode") or "generate",
+        symbols_file=saved_sf or None,
+        traditional_mode=bool(meta.get("traditional_mode", True)),
         resume=True,
         preview=False,
     )
@@ -938,10 +944,11 @@ def _describe_artwork(
     })
 
     try:
-        resp = req_lib.post(
+        from .venice import parse_json_response, venice_post
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
+            api_key,
+            {
                 "model": Config.DEFAULT_VISION_MODEL,
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.3,
@@ -949,14 +956,8 @@ def _describe_artwork(
             },
             timeout=90,
         )
-        resp.raise_for_status()
         raw = _extract_text_content(resp.json())
-
-        import json as json_mod
-        import re
-        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-        parsed_content = match.group(1).strip() if match else raw
-        data = json_mod.loads(parsed_content)
+        data = parse_json_response(raw)
         descriptions = data.get("descriptions", [])
 
         # Pad if we got fewer than expected
@@ -1030,10 +1031,11 @@ def describe_symbols(
     })
 
     try:
-        resp = req_lib.post(
+        from .venice import parse_json_response, venice_post
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {venice_key}"},
-            json={
+            venice_key,
+            {
                 "model": Config.DEFAULT_VISION_MODEL,
                 "messages": [{"role": "user", "content": content}],
                 "temperature": 0.5,
@@ -1041,14 +1043,8 @@ def describe_symbols(
             },
             timeout=90,
         )
-        resp.raise_for_status()
         raw = _extract_text_content(resp.json())
-
-        import json as json_mod
-        import re
-        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-        parsed_content = match.group(1).strip() if match else raw
-        data = json_mod.loads(parsed_content)
+        data = parse_json_response(raw)
 
         suggestions = data.get("symbols", [])
         # Attach image paths
@@ -1709,13 +1705,10 @@ def suggest_deck(user_description: str) -> dict[str, Any]:
     Args:
         user_description: The user's casual description of what they want
     """
-    import json as json_mod
-
     venice_key = _get_venice_key()
 
-    try:
-        import requests as req
-    except ImportError:
+    from .config import requests as req_lib
+    if not req_lib:
         return {"error": "requests library not available"}
 
     system = (
@@ -1734,10 +1727,11 @@ Return a JSON object with:
 - "reasoning": 1 sentence explaining your creative choices"""
 
     try:
-        resp = req.post(
+        from .venice import parse_json_response, venice_post
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {venice_key}"},
-            json={
+            venice_key,
+            {
                 "model": Config.DEFAULT_TEXT_MODEL,
                 "messages": [
                     {"role": "system", "content": system},
@@ -1748,13 +1742,8 @@ Return a JSON object with:
             },
             timeout=90,
         )
-        resp.raise_for_status()
         raw = _extract_text_content(resp.json())
-
-        import re
-        match = re.search(r'```(?:json)?\s*(.*?)```', raw, re.DOTALL)
-        content = match.group(1).strip() if match else raw
-        suggestion = json_mod.loads(content)
+        suggestion = parse_json_response(raw)
 
         # Add cost estimate
         cards = suggestion.get("cards", 78)

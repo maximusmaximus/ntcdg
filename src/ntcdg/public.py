@@ -172,6 +172,7 @@ def ensure_public_identity(
     *,
     rebase: bool = False,
     allow_local: bool = False,
+    publish: bool = True,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assign (once) and return a deck's public slug + base URL.
@@ -220,9 +221,10 @@ def ensure_public_identity(
         taken = {m.get("public_slug") for m in index.values() if m.get("public_slug")}
         slug = new_deck_slug(deck_name, taken)
 
-    update_deck_meta(
-        deck_name, public_slug=slug, public_base_url=effective, published=True,
-    )
+    meta_updates: dict[str, Any] = {"public_slug": slug, "public_base_url": effective}
+    if publish:
+        meta_updates["published"] = True
+    update_deck_meta(deck_name, **meta_updates)
     return {
         "enabled": True, "base_url": effective, "slug": slug,
         "mode": url_mode(effective), "warnings": warnings, "reason": "",

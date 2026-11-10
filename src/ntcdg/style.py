@@ -14,7 +14,7 @@ from typing import Any
 
 from .config import Config, logger, requests
 from .models import Card
-from .venice import _extract_text_content
+from .venice import _extract_text_content, venice_post
 
 
 # ==================== STYLE EXTRACTION ====================
@@ -79,10 +79,10 @@ def extract_style_from_images(
     })
 
     try:
-        resp = requests.post(
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
+            api_key,
+            {
                 "model": vision_model,
                 "messages": [{"role": "user", "content": content}],
                 "max_tokens": 4000,
@@ -90,7 +90,6 @@ def extract_style_from_images(
             },
             timeout=90,
         )
-        resp.raise_for_status()
         data = resp.json()
         style = _extract_text_content(data)
         logger.info(f"Extracted visual style from {len(content) - 1} images")
@@ -121,10 +120,10 @@ def generate_style_from_text(
     symbols_text = ", ".join(symbol_descriptions[:10]) if symbol_descriptions else "none"
 
     try:
-        resp = requests.post(
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
+            api_key,
+            {
                 "model": text_model,
                 "messages": [
                     {
@@ -157,7 +156,6 @@ def generate_style_from_text(
             },
             timeout=90,
         )
-        resp.raise_for_status()
         style = _extract_text_content(resp.json())
         logger.info("Generated deck style from text description")
         return style
@@ -220,10 +218,10 @@ def refine_card_prompt(
     text_model = model or Config.DEFAULT_TEXT_MODEL
 
     try:
-        resp = requests.post(
+        resp = venice_post(
             Config.VENICE_TEXT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
+            api_key,
+            {
                 "model": text_model,
                 "messages": [
                     {
@@ -264,7 +262,6 @@ def refine_card_prompt(
             },
             timeout=90,
         )
-        resp.raise_for_status()
         prompt = _extract_text_content(resp.json())
 
         # Strip any markdown quotes the model might add

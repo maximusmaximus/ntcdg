@@ -193,6 +193,37 @@ class UsageTracker:
         return tracker
 
 
+def merge_usage_dicts(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
+    """Combine a previous run's usage dict with a retry/resume run's delta."""
+    if not previous:
+        return dict(current)
+    merged = dict(current)
+    for k in (
+        "text_calls", "text_calls_failed", "prompt_tokens", "completion_tokens",
+        "total_tokens", "image_calls", "image_calls_failed", "preview_image_calls",
+        "style_calls",
+    ):
+        merged[k] = int(previous.get(k, 0) or 0) + int(current.get(k, 0) or 0)
+    merged["elapsed_seconds"] = round(
+        float(previous.get("elapsed_seconds", 0.0) or 0.0)
+        + float(current.get("elapsed_seconds", 0.0) or 0.0),
+        1,
+    )
+    prev_cost = previous.get("estimated_cost_usd") or {}
+    curr_cost = current.get("estimated_cost_usd") or {}
+    merged["estimated_cost_usd"] = {
+        "text": round(float(prev_cost.get("text", 0.0)) + float(curr_cost.get("text", 0.0)), 4),
+        "image": round(float(prev_cost.get("image", 0.0)) + float(curr_cost.get("image", 0.0)), 4),
+        "total": round(float(prev_cost.get("total", 0.0)) + float(curr_cost.get("total", 0.0)), 4),
+    }
+    for str_key in ("text_model", "image_model", "image_size", "style_prompt", "symbol_mode", "symbols_file"):
+        if not merged.get(str_key) and previous.get(str_key):
+            merged[str_key] = previous[str_key]
+    if not merged.get("symbol_names") and previous.get("symbol_names"):
+        merged["symbol_names"] = previous["symbol_names"]
+    return merged
+
+
 def display_deck_stats(deck_name: str):
     """Display comprehensive usage stats for a deck."""
     from .storage import load_decks_index

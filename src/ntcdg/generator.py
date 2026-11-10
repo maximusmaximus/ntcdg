@@ -12,14 +12,15 @@ from .overlay import compose_card, get_card_number_text
 from .storage import (
     deck_images_dir,
     load_deck,
+    load_decks_index,
     preview_raw_dir,
     save_deck,
     update_deck_index,
     update_deck_meta,
 )
 from .style import extract_deck_style, refine_card_prompt
-from .symbols import generate_symbol_images, load_symbols_config
-from .usage import UsageTracker
+from .symbols import generate_symbol_images, load_symbols_config, symbols_dir_for
+from .usage import UsageTracker, merge_usage_dicts
 from .venice import analyze_with_venice, generate_image_with_venice
 
 if HAS_TQDM:
@@ -281,14 +282,15 @@ def create_proof_sheet_pdf(deck: list[Card], deck_name: str) -> str:
     ROWS_PER_PAGE = 3
 
     story = []
-    story.append(Paragraph(f"Proof Sheet - {deck_name}", title_style))
+    from xml.sax.saxutils import escape as xml_escape
+    story.append(Paragraph(f"Proof Sheet - {xml_escape(str(deck_name))}", title_style))
     story.append(Spacer(1, 0.3 * inch))
 
     sorted_deck = sorted(deck, key=lambda c: c.position)
 
     all_cells = []
     for card in sorted_deck:
-        title = card.display_title()
+        title = xml_escape(str(card.display_title()))
         cell_content = [Paragraph(f"<b>{card.position:02d}</b> - {title}", card_style)]
 
         if card.image_path and os.path.exists(card.image_path):
@@ -319,7 +321,7 @@ def create_proof_sheet_pdf(deck: list[Card], deck_name: str) -> str:
                 row = []
         if row:
             while len(row) < COLS:
-                row.append([""])
+                row.append("")
             table_data.append(row)
 
         if table_data:
@@ -576,17 +578,17 @@ def preview_deck_style(
 # ==================== MAIN GENERATION ====================
 def generate_deck(
     name: str,
-    num_cards: int,
-    vibe: str | None,
-    deck_prompt: str,
-    venice_key: str | None,
-    analyze: bool,
-    text_model: str,
-    generate_images: bool,
-    image_model: str,
-    image_size: str,
-    negative_prompt: str,
-    rate_limit: float,
+    num_cards: int = 78,
+    vibe: str | None = None,
+    deck_prompt: str = "",
+    venice_key: str | None = None,
+    analyze: bool = False,
+    text_model: str = Config.DEFAULT_TEXT_MODEL,
+    generate_images: bool = False,
+    image_model: str = Config.DEFAULT_IMAGE_MODEL,
+    image_size: str = Config.DEFAULT_IMAGE_SIZE,
+    negative_prompt: str = "",
+    rate_limit: float = 1.5,
     interactive: bool = True,
     symbol_mode: str = "generate",
     symbols_file: str = None,
@@ -620,7 +622,24 @@ def generate_deck(
     # Each deck's card art lives in its own folder; card file names are only
     # unique within a deck, so a shared folder let decks overwrite each other.
     card_images_dir = deck_images_dir(name)
-    deck_vibe = vibe or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
+    saved_meta = load_decks_index().get(name, {}) if resume else {}
+    deck_vibe = (
+        vibe
+        or (saved_meta.get("vibe") if resume else None)
+        or random.choice(["cyber-vortex synthesis", "neon fractal journey"])
+    )
+    if resume and not deck_prompt and saved_meta.get("theme"):
+        deck_prompt = saved_meta["theme"]
+    if resume and not symbols_file:
+        saved_sf = saved_meta.get("symbols_file") or ""
+        if saved_sf and os.path.exists(saved_sf):
+            symbols_file = saved_sf
+        else:
+            for candidate_name in ("symbols.json", "symbols_manifest.json"):
+                candidate = os.path.join(symbols_dir_for(name), candidate_name)
+                if os.path.exists(candidate):
+                    symbols_file = candidate
+                    break
 
     # --- Initialize usage tracker ---
     tracker = UsageTracker()
@@ -696,8 +715,8 @@ def generate_deck(
     )
 
     # --- Extract deck style (meta prompt for all artwork) ---
-    deck_style = ""
-    if generate_images and venice_key:
+    deck_style = (saved_meta.get("deck_style") or "") if resume else ""
+    if generate_images and venice_key and not deck_style:
         symbol_descs = [
             s.get("description", s.get("name", ""))
             for s in symbols_config["symbols"]
@@ -720,6 +739,8 @@ def generate_deck(
             )
         else:
             logger.warning("Style extraction failed, using template prompts")
+    elif deck_style:
+        logger.info(f"Reusing saved deck style ({len(deck_style)} chars)")
 
     # --- Style preview: generate 3 samples before full run ---
     if generate_images and venice_key and deck_style and preview and interactive:
@@ -779,9 +800,27 @@ def generate_deck(
                 f"will skip completed ones"
             )
 
-    # Remember the requested size so an interrupted run can be resumed in full
-    # (the per-card checkpoint would otherwise shrink num_cards in the index).
-    update_deck_meta(name, target_cards=len(card_defs), vibe=deck_vibe, theme=deck_prompt)
+    # Remember the requested size and generation config so an interrupted run can
+    # be resumed in full with identical model, style, and symbol settings.
+    persisted_symbols_file = symbols_file or ""
+    if not persisted_symbols_file:
+        manifest_candidate = os.path.join(symbols_dir_for(name), "symbols_manifest.json")
+        if os.path.exists(manifest_candidate):
+            persisted_symbols_file = manifest_candidate
+    update_deck_meta(
+        name,
+        target_cards=len(card_defs),
+        vibe=deck_vibe,
+        theme=deck_prompt,
+        symbol_mode=symbol_mode,
+        symbols_file=persisted_symbols_file,
+        traditional_mode=traditional_mode,
+        image_model=image_model,
+        text_model=text_model,
+        image_size=image_size,
+        negative_prompt=negative_prompt,
+        deck_style=deck_style,
+    )
 
     stats = {"venice_success": 0, "venice_fail": 0, "image_success": 0, "image_fail": 0}
 
@@ -805,13 +844,18 @@ def generate_deck(
         if HAS_TQDM:
             iterator.set_description(f"Card {position}/{num_cards} - {card_def['title'][:25]}")
 
-        # Resume: skip cards that already have results
-        if position in existing_cards:
-            existing_card = existing_cards[position]
-            has_analysis = existing_card.description and not existing_card.venice_error
-            has_image = existing_card.image_path and os.path.exists(
-                str(existing_card.image_path)
-            )
+        # Resume: skip completed stages without discarding partial work
+        existing_card = existing_cards.get(position)
+        has_analysis = bool(
+            existing_card and existing_card.description and not existing_card.venice_error
+        )
+        has_image = bool(
+            existing_card
+            and existing_card.image_path
+            and os.path.exists(str(existing_card.image_path))
+            and not existing_card.image_error
+        )
+        if existing_card is not None:
             skip_analysis = (not analyze) or has_analysis
             skip_image = (not generate_images) or has_image
             if skip_analysis and skip_image:
@@ -825,15 +869,29 @@ def generate_deck(
                 continue
 
         emit("card_started", position=position, total=len(card_defs), title=card_def["title"])
-        card = generate_card(
+        fresh_card = generate_card(
             position, num_cards, card_def, deck_vibe, deck_prompt,
             symbols=symbols_config["symbols"],
             traditional_mode=traditional_mode,
             artist_analysis=artist_analysis,
         )
+        if existing_card is not None:
+            card = Card.from_dict(existing_card.to_dict())
+            if not card.symbols:
+                card.symbols = fresh_card.symbols
+            if not card.layout:
+                card.layout = fresh_card.layout
+            card.deck_vibe = deck_vibe
+            card.deck_prompt = deck_prompt
+            card.is_first = fresh_card.is_first
+            card.is_last = fresh_card.is_last
+        else:
+            card = fresh_card
 
-        # --- Refine prompt with LLM (style-aware) ---
-        if generate_images and venice_key and deck_style:
+        need_image = bool(generate_images and venice_key and not has_image)
+
+        # --- Refine prompt with LLM (style-aware) when generating an image ---
+        if need_image and deck_style:
             if HAS_TQDM:
                 iterator.set_description(
                     f"Card {position}/{num_cards} - Prompt"
@@ -841,50 +899,58 @@ def generate_deck(
             card.prompt = refine_card_prompt(
                 card, deck_style, venice_key, text_model,
             )
-        else:
+        elif not card.prompt or need_image:
             card.prompt = build_card_prompt(card, deck_style)
         emit("card_prompt", position=position, symbols=list(card.symbols), prompt=card.prompt)
 
         if analyze and venice_key:
-            if HAS_TQDM:
-                iterator.set_description(f"Card {position}/{num_cards} - Venice Text")
-            result = analyze_with_venice(
-                card, venice_key, text_model, tracker=tracker,
-            )
-            card.update(result)
-            if "venice_error" not in result:
+            if has_analysis:
                 stats["venice_success"] += 1
             else:
-                stats["venice_fail"] += 1
-            emit("card_analysis", position=position, result=result)
+                if HAS_TQDM:
+                    iterator.set_description(f"Card {position}/{num_cards} - Venice Text")
+                card.venice_error = None
+                result = analyze_with_venice(
+                    card, venice_key, text_model, tracker=tracker,
+                )
+                card.update(result)
+                if "venice_error" not in result:
+                    stats["venice_success"] += 1
+                else:
+                    stats["venice_fail"] += 1
+                emit("card_analysis", position=position, result=result)
 
         if generate_images and venice_key:
-            if HAS_TQDM:
-                iterator.set_description(f"Card {position}/{num_cards} - Image")
-            result = generate_image_with_venice(
-                card, venice_key, image_model,
-                image_size=image_size,
-                negative_prompt=negative_prompt,
-                rate_limit_delay=rate_limit,
-                symbol_mode=symbol_mode,
-                symbol_images=symbol_images,
-                tracker=tracker,
-                output_dir=card_images_dir,
-            )
-            card.update(result)
-            if card.image_path:
-                compose_card(
-                    image_path=card.image_path,
-                    title=card.display_title(),
-                    card_number=get_card_number_text(card),
-                    card_type=card.card_type,
-                    font_path=font_path,
-                )
+            if has_image:
                 stats["image_success"] += 1
             else:
-                stats["image_fail"] += 1
-            emit("card_image", position=position, image_path=card.image_path,
-                 error=card.image_error)
+                if HAS_TQDM:
+                    iterator.set_description(f"Card {position}/{num_cards} - Image")
+                card.image_error = None
+                result = generate_image_with_venice(
+                    card, venice_key, image_model,
+                    image_size=image_size,
+                    negative_prompt=negative_prompt,
+                    rate_limit_delay=rate_limit,
+                    symbol_mode=symbol_mode,
+                    symbol_images=symbol_images,
+                    tracker=tracker,
+                    output_dir=card_images_dir,
+                )
+                card.update(result)
+                if card.image_path:
+                    compose_card(
+                        image_path=card.image_path,
+                        title=card.display_title(),
+                        card_number=get_card_number_text(card),
+                        card_type=card.card_type,
+                        font_path=font_path,
+                    )
+                    stats["image_success"] += 1
+                else:
+                    stats["image_fail"] += 1
+                emit("card_image", position=position, image_path=card.image_path,
+                     error=card.image_error)
 
         deck.append(card)
         # Checkpoint so a crash / cancelled job can be resumed without losing work.
@@ -900,9 +966,14 @@ def generate_deck(
     # --- Finalize and persist usage stats ---
     tracker.finalize()
     update_deck_index(name, len(deck), vibe=deck_vibe, theme=deck_prompt)
-    update_deck_meta(name, usage=tracker.to_dict())
+    final_usage = (
+        merge_usage_dicts(saved_meta.get("usage"), tracker.to_dict())
+        if resume
+        else tracker.to_dict()
+    )
+    update_deck_meta(name, usage=final_usage)
     emit("deck_done", deck=name, num_cards=len(deck), stats=dict(stats),
-         usage=tracker.to_dict())
+         usage=final_usage)
 
     if interactive:
         deck = interactive_review(
