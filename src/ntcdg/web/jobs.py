@@ -15,16 +15,18 @@ import logging
 import secrets
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
-from ..runtime import event_sink_scope
+from ..runtime import JobCancelledError, cancel_scope, event_sink_scope
 from . import tools
 from .db import now_iso
 from .files import Sanitizer
 
 ACTIVE = ("queued", "running")
-TERMINAL = ("done", "error", "interrupted")
+TERMINAL = ("done", "error", "interrupted", "cancelled")
 MAX_EVENTS = 5000
 MAX_FINISHED_IN_MEMORY = 200
 
@@ -34,36 +36,98 @@ class JobLimitError(Exception):
 
 
 class LiveLog:
-    """Thread-safe, size-capped text buffer usable as a stdout target."""
+    """Thread-safe, size-capped text buffer with monotonic cursor slicing."""
 
-    def __init__(self, cap: int = 400_000):
-        self._parts: list[str] = []
+    def __init__(
+        self,
+        cap: int = 400_000,
+        transform: Callable[[str], str] | None = None,
+        on_write: Callable[[], None] | None = None,
+    ):
+        self._chunks: deque[tuple[int, str]] = deque()
         self._size = 0
         self._cap = cap
-        self._dropped = 0
+        self._start_offset = 0
+        self._total_written = 0
+        self._transform = transform
+        self._on_write = on_write
         self._lock = threading.Lock()
+
+    @property
+    def has_transform(self) -> bool:
+        return self._transform is not None
+
+    @property
+    def total_written(self) -> int:
+        with self._lock:
+            return self._total_written
+
+    def set_transform(self, transform: Callable[[str], str] | None) -> None:
+        with self._lock:
+            self._transform = transform
+            if transform and self._chunks:
+                rebuilt: deque[tuple[int, str]] = deque()
+                offset = self._start_offset
+                size = 0
+                for _end, text in self._chunks:
+                    clean = transform(text)
+                    offset += len(clean)
+                    size += len(clean)
+                    rebuilt.append((offset, clean))
+                self._chunks = rebuilt
+                self._size = size
+                self._total_written = offset
 
     def write(self, s: str) -> int:
         if not s:
             return 0
+        orig_len = len(s)
+        notify = None
         with self._lock:
-            self._parts.append(s)
-            self._size += len(s)
-            while self._size > self._cap and len(self._parts) > 1:
-                removed = self._parts.pop(0)
-                self._size -= len(removed)
-                self._dropped += len(removed)
-        return len(s)
+            text = self._transform(s) if self._transform is not None else s
+            if text:
+                end = self._total_written + len(text)
+                self._chunks.append((end, text))
+                self._total_written = end
+                self._size += len(text)
+                while self._size > self._cap and len(self._chunks) > 1:
+                    old_end, removed = self._chunks.popleft()
+                    self._size -= len(removed)
+                    self._start_offset = old_end
+            notify = self._on_write
+        if notify is not None:
+            notify()
+        return orig_len
 
     def flush(self) -> None:
         return None
 
-    def getvalue(self) -> str:
+    def slice_from(self, cursor: int = 0) -> tuple[str, int]:
+        """Return ``(new_text, total_written)`` for monotonic ``cursor``."""
+        cursor = max(0, int(cursor))
         with self._lock:
-            text = "".join(self._parts)
-            if not self._dropped:
-                return text
-            return f"[... {self._dropped} earlier characters trimmed ...]\n" + text
+            if cursor >= self._total_written:
+                return "", self._total_written
+            parts: list[str] = []
+            if cursor < self._start_offset:
+                trimmed = self._start_offset - cursor
+                prefix = "" if cursor == 0 else "\n"
+                parts.append(f"{prefix}[... {trimmed} earlier characters trimmed ...]\n")
+                parts.extend(chunk for _end, chunk in self._chunks)
+                return "".join(parts), self._total_written
+            for end, chunk in self._chunks:
+                if end <= cursor:
+                    continue
+                chunk_start = end - len(chunk)
+                if cursor > chunk_start:
+                    parts.append(chunk[cursor - chunk_start :])
+                else:
+                    parts.append(chunk)
+            return "".join(parts), self._total_written
+
+    def getvalue(self) -> str:
+        text, _ = self.slice_from(0)
+        return text
 
 
 class Job:
@@ -78,13 +142,19 @@ class Job:
         self.input = call.display_input
         self.status = "queued"
         self.events: list[dict[str, Any]] = []
-        self.log = LiveLog()
+        self.cond = threading.Condition()
+        self.cancel_event = threading.Event()
+        self._future: Future[Any] | None = None
+        self.log = LiveLog(on_write=self._notify_log)
         self.output: Any = None
         self.error = ""
         self.created_at = now_iso()
         self.started_at = ""
         self.finished_at = ""
-        self.cond = threading.Condition()
+
+    def _notify_log(self) -> None:
+        with self.cond:
+            self.cond.notify_all()
 
     def add_event(self, event: dict[str, Any]) -> None:
         with self.cond:
@@ -167,15 +237,15 @@ class JobManager:
         """Full job state for its owner (None for anyone else / unknown ids)."""
         job = self._memory_job(job_id, user_id)
         if job is not None:
-            log = job.log.getvalue()
-            if sanitizer is not None:
-                log = sanitizer.text(log)
+            log_chunk, log_total = job.log.slice_from(since_log)
+            if sanitizer is not None and not job.log.has_transform and log_chunk:
+                log_chunk = sanitizer.text(log_chunk)
             with job.cond:
                 events = list(job.events[since_event:])
                 total_events = len(job.events)
             return {
                 **job.summary(), "input": job.input, "events": events,
-                "events_total": total_events, "log": log[since_log:], "log_total": len(log),
+                "events_total": total_events, "log": log_chunk, "log_total": log_total,
                 "output": job.output, "live": True,
             }
         row = self.db.get_job(job_id)
@@ -192,6 +262,50 @@ class JobManager:
             "output": json.loads(row["output_json"]) if row["output_json"] else None,
             "live": False,
         }
+
+    def wait_for_change(
+        self, job_id: str, user_id: int, since_event: int, since_log: int, timeout: float = 0.5,
+    ) -> None:
+        """Wait up to ``timeout`` seconds for new events, log lines, or completion."""
+        job = self._memory_job(job_id, user_id)
+        if job is None:
+            return
+        with job.cond:
+            if (
+                len(job.events) > since_event
+                or job.log.total_written > since_log
+                or (job.status in TERMINAL and job.finished_at)
+            ):
+                return
+            job.cond.wait(timeout)
+
+    def cancel(self, job_id: str, user_id: int) -> dict[str, Any] | None:
+        """Request cooperative cancellation of an owned job."""
+        job = self._memory_job(job_id, user_id)
+        if job is None:
+            row = self.db.get_job(job_id)
+            if not row or int(row["user_id"]) != int(user_id):
+                return None
+            return {"id": job_id, "status": row["status"], "cancelled": False}
+
+        job.cancel_event.set()
+        with job.cond:
+            if job.status in TERMINAL:
+                return {"id": job.id, "status": job.status, "cancelled": False}
+            if job.status == "queued" and job._future is not None and job._future.cancel():
+                job.status = "cancelled"
+                job.error = "Cancelled before starting"
+                job.finished_at = now_iso()
+                job.cond.notify_all()
+                with contextlib.suppress(Exception):
+                    self.db.update_job(
+                        job.id, status=job.status, error=job.error, finished_at=job.finished_at,
+                        events_json=json.dumps(job.events), log=job.log.getvalue(), output_json="",
+                    )
+                return {"id": job.id, "status": job.status, "cancelled": True}
+
+        job.add_event({"type": "cancelling", "ts": now_iso()})
+        return {"id": job.id, "status": job.status, "cancelling": True}
 
     def list_jobs(self, user_id: int, limit: int = 50) -> list[dict[str, Any]]:
         rows = {r["id"]: r for r in self.db.list_jobs(user_id, limit)}
@@ -225,7 +339,7 @@ class JobManager:
             self._jobs[job.id] = job
             self._prune_locked()
         self.db.insert_job(job.id, uid, job.tool, job.deck, job.input, job.status, job.created_at)
-        self.executor.submit(self._run, job, call, ctx, venice_key)
+        job._future = self.executor.submit(self._run, job, call, ctx, venice_key)
         return job
 
     def _prune_locked(self) -> None:
@@ -261,7 +375,18 @@ class JobManager:
              venice_key: str | None) -> None:
         ident = threading.get_ident()
         sanitizer = Sanitizer(ctx.db, ctx.user)
+        job.log.set_transform(sanitizer.text)
         with job.cond:
+            if job.cancel_event.is_set():
+                job.status = "cancelled"
+                job.error = "Cancelled by user"
+                job.finished_at = now_iso()
+                job.cond.notify_all()
+                with contextlib.suppress(Exception):
+                    self.db.update_job(
+                        job.id, status=job.status, error=job.error, finished_at=job.finished_at,
+                    )
+                return
             job.status = "running"
             job.started_at = now_iso()
             job.cond.notify_all()
@@ -272,7 +397,7 @@ class JobManager:
             job.add_event(self._clean_event(event, job, sanitizer))
 
         try:
-            with event_sink_scope(sink):
+            with event_sink_scope(sink), cancel_scope(job.cancel_event):
                 output = tools.execute(call, ctx, venice_key, stdout=job.log)
             sanitizer.refresh()
             clean = sanitizer.value(output)
@@ -281,6 +406,10 @@ class JobManager:
                 job.output = clean
                 job.error = failure
                 job.status = "error" if failure else "done"
+        except JobCancelledError:
+            with job.cond:
+                job.error = "Cancelled by user"
+                job.status = "cancelled"
         except Exception as e:  # pragma: no cover - execute() already traps tool errors
             with job.cond:
                 job.error = sanitizer.text(str(e) or type(e).__name__)
@@ -293,7 +422,7 @@ class JobManager:
             with contextlib.suppress(Exception):  # e.g. user deleted mid-job
                 self.db.update_job(
                     job.id, status=job.status, error=job.error, finished_at=job.finished_at,
-                    events_json=json.dumps(job.events), log=sanitizer.text(job.log.getvalue()),
+                    events_json=json.dumps(job.events), log=job.log.getvalue(),
                     output_json=json.dumps(job.output) if job.output is not None else "",
                 )
 

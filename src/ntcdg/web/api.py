@@ -58,7 +58,7 @@ async def api_run_tool(request: Request, tool_name: str):
         return _error(str(e), 400, tool=tool_name, input=raw)
 
     key = user_venice_key(request, user)
-    if spec.name in tools.GENERATION_TOOLS | {"describe_symbols", "suggest_deck"} and not key:
+    if tools.call_needs_venice_key(call) and not key:
         return _error(
             "This tool uses Venice AI and needs your own Venice API key. "
             "Add it on your profile page (it is stored encrypted).",
@@ -97,6 +97,18 @@ def job_json(request: Request, job_id: str, since_event: int = 0, since_log: int
     return view
 
 
+@router.post("/jobs/{job_id}/cancel")
+def job_cancel(request: Request, job_id: str):
+    """Cooperatively cancel an owned queued or running job."""
+    user = require_api_user(request)
+    auth.check_csrf(request)
+    st = state(request)
+    res = st.jobs.cancel(job_id, user["id"])
+    if res is None:
+        return _error("Job not found", 404)
+    return res
+
+
 @router.get("/jobs/{job_id}/events")
 async def job_events(request: Request, job_id: str):
     """Server-Sent Events: incremental events/log/status until the job finishes."""
@@ -118,7 +130,7 @@ async def job_events(request: Request, job_id: str):
             done = view["status"] in TERMINAL and (not view["live"] or view["finished_at"])
             payload = {
                 "status": view["status"], "error": view["error"], "events": view["events"],
-                "log": view["log"], "output": view["output"] if done else None,
+                "log": view["log"], "log_total": since_log, "output": view["output"] if done else None,
             }
             yield f"event: update\ndata: {json.dumps(payload)}\n\n"
             if done:
@@ -126,7 +138,9 @@ async def job_events(request: Request, job_id: str):
                 break
             if await request.is_disconnected():
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.to_thread(
+                st.jobs.wait_for_change, job_id, user["id"], since_event, since_log, 0.5,
+            )
 
     return StreamingResponse(
         stream(), media_type="text/event-stream",

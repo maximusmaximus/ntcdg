@@ -1551,6 +1551,8 @@ class TraditionalDeckRegistry:
             iterator = tqdm(iterator, desc="Generating Traditional Symbols", unit="symbol", ncols=110)
 
         for i in iterator:
+            from .runtime import check_cancelled
+            check_cancelled()
             sym = missing[i]
             if HAS_TQDM:
                 iterator.set_description(f"Symbol: {sym['name'][:25]}")
@@ -1629,8 +1631,13 @@ def _safe_generate_symbol(**kwargs: Any) -> str | None:
     The retry decorator re-raises the last exception; one bad symbol must not
     abort generation of the remaining symbols (or the whole deck).
     """
+    from .runtime import JobCancelledError, check_cancelled
+
+    check_cancelled()
     try:
         return _generate_single_symbol(**kwargs)
+    except JobCancelledError:
+        raise
     except Exception as e:
         logger.warning(f"Symbol generation failed for {kwargs.get('name')!r}: {e}")
         return None

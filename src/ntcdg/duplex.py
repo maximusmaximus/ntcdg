@@ -31,6 +31,7 @@ import math
 import os
 import shutil
 import tempfile
+import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -466,6 +467,9 @@ def create_duplex_pdfs(
 
 # ==================== CALIBRATION ====================
 
+_CALIBRATION_LOCK = threading.Lock()
+
+
 def create_calibration_pdf(
     sheet_size: str = "letter",
     duplex_flip: str = "long_edge",
@@ -490,8 +494,11 @@ def create_calibration_pdf(
     off_in = (ox_mm / MM_PER_INCH, oy_mm / MM_PER_INCH)
 
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
-    path = os.path.join(Config.OUTPUT_DIR, f"CALIBRATION_{sheet_size}_{duplex_flip}.pdf")
-    c = _new_canvas(path, sheet_size, f"NTCDG duplex calibration ({sheet_size}, {duplex_flip})")
+    cal_fname = f"CALIBRATION_{sheet_size}_{duplex_flip}.pdf"
+    path = os.path.join(Config.OUTPUT_DIR, cal_fname)
+    fd, tmp_path = tempfile.mkstemp(dir=Config.OUTPUT_DIR, prefix=".tmp_cal_", suffix=".pdf")
+    os.close(fd)
+    c = _new_canvas(tmp_path, sheet_size, f"NTCDG duplex calibration ({sheet_size}, {duplex_flip})")
 
     def cell_marks(label: str, side: str):
         w, h = CARD_BLEED_W * inch, CARD_BLEED_H * inch
@@ -543,5 +550,12 @@ def create_calibration_pdf(
         "+y moves backs up (as seen on this side)"
     ))
     c.showPage()
-    c.save()
+    try:
+        c.save()
+        with _CALIBRATION_LOCK:
+            os.replace(tmp_path, path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
     return path

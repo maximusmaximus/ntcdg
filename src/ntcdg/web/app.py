@@ -41,6 +41,7 @@ class AppState:
     db: Database
     keybox: auth.KeyBox
     limiter: auth.LoginRateLimiter
+    signup_limiter: auth.LoginRateLimiter
     jobs: JobManager
     templates: Jinja2Templates
 
@@ -98,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         yield
         jobs.shutdown(wait=False)
+        db.close()
 
     app = FastAPI(
         title="NTCDG — Novel Tarot Card Deck Generator",
@@ -113,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ntcdg = AppState(
         settings=settings, db=db, keybox=auth.KeyBox(settings.secret),
         limiter=auth.LoginRateLimiter(settings.login_max_failures, settings.login_window_seconds),
+        signup_limiter=auth.LoginRateLimiter(15, settings.login_window_seconds),
         jobs=jobs, templates=templates,
     )
 

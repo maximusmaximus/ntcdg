@@ -173,3 +173,32 @@ def event_sink_scope(sink: Callable[[dict[str, Any]], None] | None) -> Iterator[
 
 def current_event_sink() -> Callable[[dict[str, Any]], None] | None:
     return _event_sink.get()
+
+
+# ==================== COOPERATIVE JOB CANCELLATION ====================
+
+
+class JobCancelledError(RuntimeError):
+    """Raised when a running background job is cooperatively cancelled."""
+
+
+_cancel_event: contextvars.ContextVar[threading.Event | None] = contextvars.ContextVar(
+    "ntcdg_cancel_event", default=None,
+)
+
+
+@contextlib.contextmanager
+def cancel_scope(event: threading.Event | None) -> Iterator[None]:
+    """Bind a cancellation ``threading.Event`` for the current context."""
+    token = _cancel_event.set(event)
+    try:
+        yield
+    finally:
+        _cancel_event.reset(token)
+
+
+def check_cancelled() -> None:
+    """Raise :class:`JobCancelledError` if the active job has been cancelled."""
+    ev = _cancel_event.get()
+    if ev is not None and ev.is_set():
+        raise JobCancelledError("Job cancelled by user")

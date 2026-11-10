@@ -294,6 +294,14 @@ Dev dependencies (`pip install -e ".[dev]"`): `pytest`, `ruff`, `mypy`, `httpx`
 Web app (`pip install -e ".[web]"`): `fastapi`, `uvicorn`, `jinja2`, `python-multipart`,
 `itsdangerous`, `cryptography`
 
+## Production Deployment (`decks.grok.me`)
+
+Ready-to-use reverse-proxy, systemd, and environment templates for `https://decks.grok.me` live in [`deploy/`](deploy/):
+
+- `deploy/.env.production.example` — production environment (`NTCDG_PUBLIC_BASE_URL=https://decks.grok.me` for `/c/<deck-slug>/<card-slug>` QR URLs, or `https://{deck}.decks.grok.me` for per-deck subdomains, plus `NTCDG_COOKIE_SECURE=1` and `NTCDG_WEB_SECRET`).
+- `deploy/ntcdg-web.service` — hardened systemd service running `ntcdg-web --host 127.0.0.1 --port 8000 --proxy-headers`.
+- `deploy/Caddyfile` — Caddy v2 TLS termination for `decks.grok.me` with `flush_interval -1` on `/jobs/*/events` so live Server-Sent Events stream without buffering.
+
 ## Running Tests
 
 ```bash

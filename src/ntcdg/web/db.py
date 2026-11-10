@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -57,48 +58,62 @@ def now_iso() -> str:
 
 
 class Database:
-    """Tiny thread-safe wrapper: one short-lived connection per operation."""
+    """Thread-safe SQLite wrapper using WAL mode and per-thread connection reuse."""
 
     def __init__(self, path: str):
         self.path = path
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
         self._lock = threading.RLock()
-        with self._connect() as conn:
+        self._local = threading.local()
+        self._conns: list[sqlite3.Connection] = []
+        conn = self._get_conn()
+        with self._lock, conn:
             conn.executescript(SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, timeout=30)
+        conn = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 30000")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
         return conn
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._connect()
+            self._local.conn = conn
+            with self._lock:
+                self._conns.append(conn)
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            conns = list(self._conns)
+            self._conns.clear()
+        self._local = threading.local()
+        for conn in conns:
+            with contextlib.suppress(Exception):
+                conn.close()
 
     def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute(sql, params)
-                conn.commit()
-                return cur
-            finally:
-                conn.close()
+            conn = self._get_conn()
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur
 
     def _one(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
         with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(sql, params).fetchone()
-                return dict(row) if row else None
-            finally:
-                conn.close()
+            row = self._get_conn().execute(sql, params).fetchone()
+            return dict(row) if row else None
 
     def _all(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         with self._lock:
-            conn = self._connect()
-            try:
-                return [dict(r) for r in conn.execute(sql, params).fetchall()]
-            finally:
-                conn.close()
+            return [dict(r) for r in self._get_conn().execute(sql, params).fetchall()]
 
     # ==================== USERS ====================
 

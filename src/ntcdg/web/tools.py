@@ -19,7 +19,7 @@ from typing import Any
 
 from .. import mcp_server
 from ..config import Config
-from ..runtime import capture_stdout_to, venice_key_scope
+from ..runtime import JobCancelledError, capture_stdout_to, venice_key_scope
 from . import files as webfiles
 from . import namespace as ns
 
@@ -496,6 +496,18 @@ def prepare_call(spec: ToolSpec, raw: dict[str, Any], ctx: ToolContext) -> Prepa
     return PreparedCall(spec, display, kwargs, deck_short, internal_deck)
 
 
+def call_needs_venice_key(call: PreparedCall) -> bool:
+    """Return True when executing ``call`` requires the user's Venice API key."""
+    if not call.spec.needs_key:
+        return False
+    if call.spec.name == "register_symbols":
+        if not call.kwargs.get("auto_describe", True):
+            return False
+        syms = call.kwargs.get("symbols") or []
+        return any(not (s.get("description") or "").strip() for s in syms)
+    return True
+
+
 # ==================== EXECUTION ====================
 
 def _seed_public_slug(internal: str, short: str) -> None:
@@ -530,6 +542,8 @@ def execute(call: PreparedCall, ctx: ToolContext, venice_key: str | None,
             else:
                 kwargs.pop("confirm", None)
                 result = call.spec.func(**kwargs)
+        except JobCancelledError:
+            raise
         except Exception as e:
             result = {"success": False, "error": str(e) or type(e).__name__}
     if not isinstance(result, dict):

@@ -66,8 +66,18 @@ def signup_form(request: Request):
 async def signup(request: Request):
     form = await auth.check_csrf_form(request)
     st = state(request)
+    ip = _client_ip(request)
     username = str(form.get("username") or "").strip().lower()
     display_name = str(form.get("display_name") or "").strip()[:80]
+    wait = st.signup_limiter.retry_after("__signup__", ip)
+    if wait:
+        resp = render(
+            request, "signup.html", status_code=429,
+            error=f"Too many signup attempts from this address. Try again in {wait} seconds.",
+            form={"username": username, "display_name": display_name},
+        )
+        resp.headers["Retry-After"] = str(wait)
+        return resp
     password = str(form.get("password") or "")
     password2 = str(form.get("password2") or "")
     error = ""
@@ -81,13 +91,16 @@ async def signup(request: Request):
     if not error and st.db.get_user_by_username(username):
         error = "That username is taken."
     if error:
+        st.signup_limiter.record_failure("__signup__", ip)
         return render(request, "signup.html", status_code=400, error=error,
                       form={"username": username, "display_name": display_name})
     try:
         uid = st.db.create_user(username, auth.hash_password(password), display_name)
     except Exception:  # unique race
+        st.signup_limiter.record_failure("__signup__", ip)
         return render(request, "signup.html", status_code=400, error="That username is taken.",
                       form={"username": username, "display_name": display_name})
+    st.signup_limiter.record_failure("__signup__", ip)
     auth.login_session(request, st.db.get_user(uid))
     auth.flash(request, "Welcome! Add your Venice API key on your profile to start generating.", "ok")
     return _redirect("/dashboard")
