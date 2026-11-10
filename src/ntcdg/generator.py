@@ -391,6 +391,9 @@ def interactive_review(
         if regenerate_text and venice_key:
             result = analyze_with_venice(card, venice_key, text_model)
             card.update(result)
+            if not regenerate_images:
+                from .overlay import recompose_card
+                recompose_card(card, font_path=font_path or "")
             print("  → Text analysis updated")
 
         if regenerate_images and venice_key:
@@ -526,6 +529,7 @@ def preview_deck_style(
                 card_number=get_card_number_text(card),
                 card_type=card.card_type,
                 font_path=font_path,
+                preserve_raw=False,
             )
             preview_paths.append(preview_path)
             print(f"  Preview {i + 1}: {card_def['title']:<20} -> {preview_path}")

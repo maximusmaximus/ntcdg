@@ -1459,7 +1459,7 @@ def preview_style(
         build_card_prompt,
         generate_card,
     )
-    from .overlay import get_card_number_text, overlay_card_text
+    from .overlay import compose_card, get_card_number_text
     from .storage import preview_raw_dir, validate_deck_name
     from .style import extract_deck_style, refine_card_prompt
     from .symbols import load_symbols_config
@@ -1533,9 +1533,12 @@ def preview_style(
             )
             preview_path = os.path.join(preview_dir, preview_name)
             shutil.copy2(card.image_path, preview_path)
-            overlay_card_text(
-                preview_path, card.display_title(),
-                get_card_number_text(card),
+            compose_card(
+                image_path=preview_path,
+                title=card.display_title(),
+                card_number=get_card_number_text(card),
+                card_type=card.card_type or "",
+                preserve_raw=False,
             )
             previews.append({
                 "card": card_def["title"],
@@ -1571,10 +1574,10 @@ def generate_single_card(
         card_num: Card position number (1-based)
     """
     from .generator import build_card_prompt
-    from .overlay import get_card_number_text, overlay_card_text
+    from .overlay import compose_card, get_card_number_text
     from .storage import deck_images_dir, load_deck, load_decks_index, save_deck
     from .style import refine_card_prompt
-    from .symbols import load_symbols_config
+    from .symbols import load_symbols_config, symbols_dir_for
     from .venice import analyze_with_venice, generate_image_with_venice
 
     venice_key = _get_venice_key()
@@ -1587,16 +1590,25 @@ def generate_single_card(
     if not card:
         return {"error": f"Card {card_num} not found in deck"}
 
-    # Get deck metadata for style
+    # Get deck metadata for style, models, and symbol configuration
     index = load_decks_index()
     meta = index.get(deck_name, {})
     usage = meta.get("usage", {})
-    deck_style = usage.get("style_prompt", "")
+    deck_style = meta.get("deck_style") or usage.get("style_prompt", "")
+    text_model = meta.get("text_model") or Config.DEFAULT_TEXT_MODEL
+    image_model = meta.get("image_model") or Config.DEFAULT_IMAGE_MODEL
+    image_size = meta.get("image_size") or Config.DEFAULT_IMAGE_SIZE
+    symbol_mode = meta.get("symbol_mode") or usage.get("symbol_mode") or "generate"
+
+    saved_sf = meta.get("symbols_file") or usage.get("symbols_file") or ""
+    if not saved_sf or not os.path.isfile(saved_sf):
+        default_manifest = os.path.join(symbols_dir_for(deck_name), "symbols.json")
+        saved_sf = default_manifest if os.path.isfile(default_manifest) else ""
 
     # Refine prompt
     if deck_style:
         card.prompt = refine_card_prompt(
-            card, deck_style, venice_key, Config.DEFAULT_TEXT_MODEL,
+            card, deck_style, venice_key, text_model,
         )
     elif card.prompt:
         pass  # keep existing prompt
@@ -1604,29 +1616,32 @@ def generate_single_card(
         card.prompt = build_card_prompt(card, "")
 
     # Analyze
-    result = analyze_with_venice(card, venice_key, Config.DEFAULT_TEXT_MODEL)
+    result = analyze_with_venice(card, venice_key, text_model)
     card.update(result)
 
     # Generate image
-    symbols_config = load_symbols_config(None)
+    symbols_config = load_symbols_config(saved_sf or None)
     symbol_images = {}
     for s in symbols_config["symbols"]:
         if s.get("image") and os.path.exists(str(s["image"])):
             symbol_images[s["name"]] = s["image"]
 
     img_result = generate_image_with_venice(
-        card, venice_key, Config.DEFAULT_IMAGE_MODEL,
-        image_size=Config.DEFAULT_IMAGE_SIZE,
+        card, venice_key, image_model,
+        image_size=image_size,
         rate_limit_delay=1.5,
+        symbol_mode=symbol_mode,
         symbol_images=symbol_images,
         output_dir=deck_images_dir(deck_name),
     )
     card.update(img_result)
 
     if card.image_path:
-        overlay_card_text(
-            card.image_path, card.display_title(),
-            get_card_number_text(card),
+        compose_card(
+            image_path=card.image_path,
+            title=card.display_title(),
+            card_number=get_card_number_text(card),
+            card_type=card.card_type or "",
         )
 
     # Save updated deck

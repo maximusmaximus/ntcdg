@@ -9,6 +9,7 @@ uniform placement across the entire deck.
 from __future__ import annotations
 
 import os
+import shutil
 
 from .config import logger
 
@@ -247,6 +248,49 @@ def _crop_to_fill(img, target_w, target_h):
     resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
     return img.resize((target_w, target_h), resample)
 
+
+def unframed_image_path(image_path: str) -> str:
+    """Return the sidecar path where unframed raw artwork is preserved."""
+    directory = os.path.dirname(image_path) or "."
+    return os.path.join(directory, "_unframed", os.path.basename(image_path))
+
+
+def _measure_text_width(draw, text: str, font) -> int:
+    """Return rendered pixel width of ``text`` with ``font``."""
+    if not text:
+        return 0
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return int(bbox[2] - bbox[0])
+
+
+def _wrap_two_lines(text: str) -> list[str]:
+    """Split ``text`` into two balanced lines on the nearest word boundary."""
+    words = text.split()
+    if len(words) < 2:
+        return [text]
+    mid = len(text) // 2
+    best_idx = 1
+    best_dist = len(text)
+    running = 0
+    for idx in range(1, len(words)):
+        running += len(words[idx - 1]) + (1 if idx > 1 else 0)
+        dist = abs(running - mid)
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = idx
+    return [" ".join(words[:best_idx]), " ".join(words[best_idx:])]
+
+
+def _truncate_to_width(draw, text: str, font, max_w: int) -> str:
+    """Clamp an unbroken string with an ellipsis so it never overflows ``max_w``."""
+    if _measure_text_width(draw, text, font) <= max_w:
+        return text
+    trimmed = text
+    while len(trimmed) > 1 and _measure_text_width(draw, trimmed + "…", font) > max_w:
+        trimmed = trimmed[:-1]
+    return trimmed + "…"
+
+
 def compose_card(
     image_path: str,
     title: str,
@@ -257,6 +301,8 @@ def compose_card(
     bg_color: tuple = (10, 10, 10),  # near black
     text_color: tuple = (212, 195, 150),  # gold text
     canvas_size: tuple[int, int] = (768, 1280),  # Standard 3:5 tarot bleed ratio
+    source_image_path: str | None = None,
+    preserve_raw: bool = True,
 ) -> None:
     """Compose a framed tarot card with decorative border and title.
 
@@ -269,9 +315,19 @@ def compose_card(
         logger.warning("Pillow not installed — skipping card composition")
         return
 
-    if not os.path.exists(image_path):
-        logger.warning(f"Image not found for composition: {image_path}")
+    src_path = source_image_path or image_path
+    if not os.path.exists(src_path):
+        logger.warning(f"Image not found for composition: {src_path}")
         return
+
+    if preserve_raw and not source_image_path:
+        raw_sidecar = unframed_image_path(image_path)
+        if os.path.abspath(raw_sidecar) != os.path.abspath(image_path):
+            try:
+                os.makedirs(os.path.dirname(raw_sidecar), exist_ok=True)
+                shutil.copy2(image_path, raw_sidecar)
+            except OSError as exc:
+                logger.debug(f"Could not preserve unframed artwork ({raw_sidecar}): {exc}")
 
     # Base canvas (768x1280 standard tarot 3:5 bleed ratio)
     canvas_w, canvas_h = canvas_size
@@ -320,7 +376,8 @@ def compose_card(
     art_h = canvas_h - art_y - frame_margin - 12 - title_height
 
     # Load and resize artwork to fill art box
-    img = Image.open(image_path).convert("RGB")
+    with Image.open(src_path) as raw_img:
+        img = raw_img.convert("RGB")
     art_img = _crop_to_fill(img, art_w, art_h)
     canvas.paste(art_img, (art_x, art_y))
 
@@ -331,20 +388,61 @@ def compose_card(
     separator_y = art_y + art_h + 14
     _draw_separator(draw, separator_y, canvas_w, inner_color)
 
-    # Title panel text
-    title_font_size = max(22, int(canvas_h * 0.025))
-    number_font_size = max(14, int(canvas_h * 0.016))
+    # Title panel text — auto-shrink and wrap so long titles never clip the border
+    max_text_w = max(120, art_w - 24)
+    upper_title = (title or "").strip().upper()
+    base_title_size = max(22, int(canvas_h * 0.025))
+    min_title_size = max(13, int(canvas_h * 0.014))
+    number_font_size = max(13, int(canvas_h * 0.016))
+
+    title_font_size = base_title_size
     title_font = _find_font(font_path, size=title_font_size)
+    while (
+        title_font_size > min_title_size
+        and _measure_text_width(draw, upper_title, title_font) > max_text_w
+    ):
+        title_font_size -= 2
+        title_font = _find_font(font_path, size=max(min_title_size, title_font_size))
+
+    title_lines = [upper_title]
+    if _measure_text_width(draw, upper_title, title_font) > max_text_w and " " in upper_title:
+        title_lines = _wrap_two_lines(upper_title)
+        wrap_size = max(18, int(canvas_h * 0.020))
+        title_font = _find_font(font_path, size=wrap_size)
+        while wrap_size > min_title_size and any(
+            _measure_text_width(draw, ln, title_font) > max_text_w for ln in title_lines
+        ):
+            wrap_size -= 1
+            title_font = _find_font(font_path, size=wrap_size)
+
+    title_lines = [_truncate_to_width(draw, ln, title_font, max_text_w) for ln in title_lines]
     number_font = _find_font(font_path, size=number_font_size)
 
-    # Draw Title
-    title_y = separator_y + int(title_height * 0.32)
-    _draw_text_with_shadow(
-        draw, title.upper(),
-        position=(canvas_w // 2, title_y),
-        font=title_font, fill=text_color,
-        shadow_offset=2,
-    )
+    if len(title_lines) == 1:
+        title_y = separator_y + int(title_height * 0.32)
+        _draw_text_with_shadow(
+            draw, title_lines[0],
+            position=(canvas_w // 2, title_y),
+            font=title_font, fill=text_color,
+            shadow_offset=2,
+        )
+        subtitle_y = title_y + int(title_height * 0.32)
+    else:
+        line1_y = separator_y + int(title_height * 0.22)
+        line2_y = separator_y + int(title_height * 0.46)
+        _draw_text_with_shadow(
+            draw, title_lines[0],
+            position=(canvas_w // 2, line1_y),
+            font=title_font, fill=text_color,
+            shadow_offset=2,
+        )
+        _draw_text_with_shadow(
+            draw, title_lines[1],
+            position=(canvas_w // 2, line2_y),
+            font=title_font, fill=text_color,
+            shadow_offset=2,
+        )
+        subtitle_y = separator_y + int(title_height * 0.74)
 
     # Draw Number/Type
     number_color = (160, 145, 110)
@@ -355,14 +453,39 @@ def compose_card(
         subtitle += " - "
     if card_type:
         subtitle += card_type
+    subtitle = _truncate_to_width(draw, subtitle.upper(), number_font, max_text_w)
 
     _draw_text_with_shadow(
-        draw, subtitle.upper(),
-        position=(canvas_w // 2, title_y + int(title_height * 0.32)),
+        draw, subtitle,
+        position=(canvas_w // 2, subtitle_y),
         font=number_font, fill=number_color,
         shadow_offset=1,
     )
 
     # Save
+    os.makedirs(os.path.dirname(image_path) or ".", exist_ok=True)
     canvas.save(image_path, quality=95)
     logger.debug(f"Card composed: {title} → {image_path}")
+
+
+def recompose_card(card, font_path: str = "") -> bool:
+    """Re-render a framed card PNG from its preserved unframed raw artwork.
+
+    Returns True when the card image was re-composed, False when no raw sidecar
+    exists (e.g. legacy decks generated before raw sidecars were preserved).
+    """
+    if not getattr(card, "image_path", None) or not os.path.exists(str(card.image_path)):
+        return False
+    raw_path = getattr(card, "raw_image_path", None) or unframed_image_path(str(card.image_path))
+    if not os.path.exists(raw_path):
+        return False
+    compose_card(
+        image_path=str(card.image_path),
+        title=card.display_title(),
+        card_number=get_card_number_text(card),
+        card_type=getattr(card, "card_type", "") or "",
+        font_path=font_path,
+        source_image_path=raw_path,
+        preserve_raw=False,
+    )
+    return True

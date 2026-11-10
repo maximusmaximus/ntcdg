@@ -38,8 +38,9 @@ from textual.worker import work
 
 from .config import Config, setup_logging
 from .models import Card
-from .overlay import get_card_number_text, overlay_card_text
+from .overlay import compose_card, get_card_number_text, recompose_card
 from .storage import (
+    deck_images_dir,
     load_deck,
     load_decks_index,
     save_deck,
@@ -301,6 +302,8 @@ class RegenerateDialog(ModalScreen):
                         analysis = analyze_with_venice(card, venice_key, text_model)
                         if "venice_error" not in analysis:
                             card.update(analysis)
+                            if not regenerate_images:
+                                recompose_card(card, font_path=settings.get("font_path") or "")
                             success_count += 1
                     if regenerate_images:
                         img_result = generate_image_with_venice(
@@ -308,13 +311,16 @@ class RegenerateDialog(ModalScreen):
                             image_size=image_size,
                             symbol_mode=symbol_mode,
                             symbol_images=symbol_images,
+                            output_dir=deck_images_dir(self.deck_name),
                         )
                         if img_result.get("image_path"):
                             card.update(img_result)
-                            overlay_card_text(
-                                card.image_path, card.display_title(),
-                                get_card_number_text(card),
-                                font_path=settings.get("font_path"),
+                            compose_card(
+                                image_path=card.image_path,
+                                title=card.display_title(),
+                                card_number=get_card_number_text(card),
+                                card_type=card.card_type or "",
+                                font_path=settings.get("font_path") or "",
                             )
                             success_count += 1
                 except Exception as e:

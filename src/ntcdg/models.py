@@ -14,6 +14,7 @@ class Card:
     # Core identity
     position: int = 0
     title: str = ""
+    canonical_title: str | None = None
     card_type: str = ""  # "Major Arcana" or "Minor Arcana"
     suit: str | None = None
     rank: int | str | None = None
@@ -41,6 +42,7 @@ class Card:
 
     # Image generation results
     image_path: str | None = None
+    raw_image_path: str | None = None
     image_model: str | None = None
     image_size: str | None = None
     image_error: str | None = None

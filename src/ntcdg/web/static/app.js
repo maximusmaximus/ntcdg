@@ -202,7 +202,7 @@
           gallery.appendChild(tile);
         }
         tile.querySelector("img").src = url;
-        var title = (e.card && (e.card.venice_title || e.card.title)) || e.title || "";
+        var title = (e.card && (e.card.venice_title || e.card.new_title || e.card.title)) || e.title || "";
         tile.querySelector("figcaption").textContent = e.position + (title ? " · " + title : "");
       }
       var summary = type + (e.position !== undefined ? " #" + e.position : "") + (e.title ? " — " + e.title : "");
