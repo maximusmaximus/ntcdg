@@ -260,7 +260,8 @@ def _prepare_image(
     - color_mode "color": convert RGB → CMYK
     - Saves as CMYK JPEG in tmp_dir
     """
-    img = Image.open(image_path)
+    raw_img = Image.open(image_path)
+    img: Image.Image = raw_img
 
     # Handle alpha channels
     if img.mode in ("RGBA", "P", "LA"):
@@ -651,7 +652,7 @@ def create_booklet_pdf(deck: list[Card], deck_name: str) -> str:
 
     # --- Group cards by type ---
     major = [card for card in sorted_deck if card.card_type == "Major Arcana"]
-    suits = {"Wands": [], "Cups": [], "Swords": [], "Pentacles": []}
+    suits: dict[str, list[Card]] = {"Wands": [], "Cups": [], "Swords": [], "Pentacles": []}
     for card in sorted_deck:
         if card.card_type == "Minor Arcana" and card.suit in suits:
             suits[card.suit].append(card)

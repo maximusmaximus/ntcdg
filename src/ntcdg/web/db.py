@@ -122,7 +122,7 @@ class Database:
             "INSERT INTO users (username, display_name, password_hash, created_at) VALUES (?, ?, ?, ?)",
             (username, display_name or username, password_hash, now_iso()),
         )
-        return int(cur.lastrowid)
+        return int(cur.lastrowid or 0)
 
     def get_user(self, user_id: int) -> dict[str, Any] | None:
         return self._one("SELECT * FROM users WHERE id = ?", (int(user_id),))

@@ -245,12 +245,17 @@ NTCDG_WEB_DEV=1 ntcdg-web          # then open http://127.0.0.1:8000
 ```
 ntcdg/
 ├── src/ntcdg/
-│   ├── models.py         # Card dataclass
-│   ├── config.py         # Config, dependencies, retry logic
-│   ├── runtime.py        # Per-call Venice key scope + stdout capture
-│   ├── storage.py        # Deck load/save, locked atomic index, spreadsheet
+│   ├── models.py         # Card dataclass (including canonical_title + raw_image_path)
+│   ├── config.py         # Dynamic Config paths, model registries, retry logic
+│   ├── runtime.py        # Scoped Venice key, event sink, usage tracker & job cancel
+│   ├── storage.py        # Deck load/save, per-deck locks, history, spreadsheet
+│   ├── services.py       # Shared deck summary + traditional coverage domain services
 │   ├── symbols.py        # Traditional symbol registry, artist symbols, completion
-│   ├── venice.py         # Venice API (text/image/edit)
+│   ├── data/             # Bundled static data (traditional_symbols.json)
+│   ├── style.py          # Vision/text style extraction + card prompt refinement
+│   ├── overlay.py        # Framed card composition, sidecars, title wrapping
+│   ├── usage.py          # Per-call Venice API usage tracking & cost estimation
+│   ├── venice.py         # Venice API (text, image generate, edit, multi-edit)
 │   ├── generator.py      # Deck generation, checkpoints, proof sheets, review
 │   ├── finalize.py       # Validation, print geometry, booklet, finalize report
 │   ├── duplex.py         # Duplex slot plan, registered backs, QR, calibration
@@ -288,6 +293,7 @@ All dependencies are managed via `pyproject.toml`. Install with `pip install -e 
 | `reportlab` | PDF proof sheets |
 | `tqdm` | Progress bars |
 | `textual` | TUI |
+| `Pillow` | Card framing, image validation, CMYK conversion & thumbnails |
 
 Dev dependencies (`pip install -e ".[dev]"`): `pytest`, `ruff`, `mypy`, `httpx`
 

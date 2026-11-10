@@ -229,7 +229,7 @@ def delete_upload(db, user: dict[str, Any], upload_id: str) -> bool:
 def list_symbol_manifests(username: str) -> list[dict[str, str]]:
     """The user's registered symbol manifests (``symbols:<deck>`` references)."""
     root = symbols_root()
-    found = []
+    found: list[dict[str, str]] = []
     if not os.path.isdir(root):
         return found
     for entry in sorted(os.listdir(root)):
@@ -294,17 +294,17 @@ def owned_file_map(db, user: dict[str, Any]) -> dict[str, str]:
     root = symbols_root()
     if os.path.isdir(root):
         for entry in os.listdir(root):
-            short = ns.short_name(username, entry)
-            if short is None or not ns.SHORT_DECK_RE.match(short):
+            sym_short = ns.short_name(username, entry)
+            if sym_short is None or not ns.SHORT_DECK_RE.match(sym_short):
                 continue
             sdir = symbols_dir_for(entry)
             for fname in os.listdir(sdir) if os.path.isdir(sdir) else []:
                 full = os.path.join(sdir, fname)
                 if fname == "symbols.json":
-                    mapping[_real(full)] = f"symbols:{short}"
+                    mapping[_real(full)] = f"symbols:{sym_short}"
                 elif os.path.splitext(fname)[1].lower() in IMAGE_EXTS and SAFE_FILE_RE.match(fname):
-                    _add(mapping, full, f"/files/_symbols/{short}/{fname}")
-            mapping.setdefault(_real(sdir), f"symbols-dir:{short}")
+                    _add(mapping, full, f"/files/_symbols/{sym_short}/{fname}")
+            mapping.setdefault(_real(sdir), f"symbols-dir:{sym_short}")
 
     if os.path.isdir(Config.OUTPUT_DIR):
         for fname in os.listdir(Config.OUTPUT_DIR):
@@ -460,11 +460,11 @@ def thumbnail_bytes(path: str, max_side: int = 360) -> bytes:
         if cached is not None:
             _THUMB_CACHE.move_to_end(key)
             return cached
-    with Image.open(path) as im:
-        im = im.convert("RGB")
-        im.thumbnail((max_side, max_side))
+    with Image.open(path) as raw_im:
+        rgb_im = raw_im.convert("RGB")
+        rgb_im.thumbnail((max_side, max_side))
         buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=82, optimize=True)
+        rgb_im.save(buf, "JPEG", quality=82, optimize=True)
     data = buf.getvalue()
     with _THUMB_LOCK:
         _THUMB_CACHE[key] = data

@@ -1096,7 +1096,7 @@ def get_traditional_symbols(
 
 @mcp.tool()
 def match_symbols(
-    symbols: list[dict[str, str]] = None,
+    symbols: list[dict[str, Any]] | None = None,
     symbols_file: str = "",
     target_scope: str = "full",
 ) -> dict[str, Any]:

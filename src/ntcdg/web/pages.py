@@ -128,7 +128,8 @@ async def login(request: Request):
         resp.headers["Retry-After"] = str(wait)
         return resp
     user = st.db.get_user_by_username(username) if username else None
-    if not auth.verify_password_or_dummy(password, user["password_hash"] if user else None):
+    ok = auth.verify_password_or_dummy(password, user["password_hash"] if user else None)
+    if not ok or user is None:
         st.limiter.record_failure(username, ip)
         return render(request, "login.html", status_code=401, next=nxt, form={"username": username},
                       error="Invalid username or password.")

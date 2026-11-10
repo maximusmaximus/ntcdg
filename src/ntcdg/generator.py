@@ -129,7 +129,7 @@ def generate_card(
     card_def: dict[str, Any],
     deck_vibe: str,
     deck_prompt: str = "",
-    symbols: list[dict[str, Any]] = None,
+    symbols: list[dict[str, Any]] | None = None,
     traditional_mode: bool = True,
     artist_analysis: dict[str, Any] | None = None,
 ) -> Card:
@@ -314,8 +314,8 @@ def create_proof_sheet_pdf(deck: list[Card], deck_name: str) -> str:
         page_number += 1
 
         page_cells = all_cells[page_start:page_start + cards_per_page]
-        table_data = []
-        row = []
+        table_data: list[list[Any]] = []
+        row: list[Any] = []
         for cell in page_cells:
             row.append(cell)
             if len(row) == COLS:
@@ -352,7 +352,7 @@ def interactive_review(
     image_size: str,
     negative_prompt: str,
     rate_limit: float,
-    font_path: str = None,
+    font_path: str | None = None,
 ):
     pdf_path = create_proof_sheet_pdf(deck, deck_name)
     if pdf_path:
@@ -437,7 +437,7 @@ def review_existing_deck(
     image_size: str,
     negative_prompt: str,
     rate_limit: float,
-    font_path: str = None,
+    font_path: str | None = None,
 ):
     deck = load_deck(deck_name)
     if not deck:
@@ -452,7 +452,7 @@ def review_existing_deck(
 
 
 # ==================== STYLE PREVIEW ====================
-_PREVIEW_CARDS = [
+_PREVIEW_CARDS: list[dict[str, Any]] = [
     {"title": "The Fool", "type": "Major Arcana", "arcana_number": 0},
     {"title": "Queen of Cups", "type": "Minor Arcana", "suit": "Cups", "rank": "Queen"},
     {"title": "Five of Swords", "type": "Minor Arcana", "suit": "Swords", "rank": 5},
@@ -470,10 +470,10 @@ def preview_deck_style(
     image_size: str,
     negative_prompt: str,
     rate_limit: float,
-    symbols: list[dict[str, Any]] = None,
+    symbols: list[dict[str, Any]] | None = None,
     symbol_mode: str = "generate",
-    symbol_images: dict[str, str] = None,
-    font_path: str = None,
+    symbol_images: dict[str, str] | None = None,
+    font_path: str | None = None,
     traditional_mode: bool = True,
 ) -> tuple[bool, str, str]:
     """Generate 3 preview cards and ask user to approve the style.
@@ -597,8 +597,8 @@ def generate_deck(
     rate_limit: float = 1.5,
     interactive: bool = True,
     symbol_mode: str = "generate",
-    symbols_file: str = None,
-    font_path: str = None,
+    symbols_file: str | None = None,
+    font_path: str | None = None,
     resume: bool = False,
     preview: bool = True,
     traditional_mode: bool = True,
@@ -955,7 +955,7 @@ def _execute_deck_generation(
     emit("deck_started", deck=name, num_cards=len(card_defs), vibe=deck_vibe,
          theme=deck_prompt, deck_style=deck_style)
 
-    iterator = range(len(card_defs))
+    iterator: Any = range(len(card_defs))
     if HAS_TQDM:
         iterator = tqdm(iterator, desc="Generating Deck", unit="card", ncols=110)
 
