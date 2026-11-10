@@ -541,6 +541,7 @@ def execute(call: PreparedCall, ctx: ToolContext, venice_key: str | None,
                 )
             else:
                 kwargs.pop("confirm", None)
+                assert call.spec.func is not None
                 result = call.spec.func(**kwargs)
         except JobCancelledError:
             raise

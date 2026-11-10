@@ -12,7 +12,7 @@ from typing import Any
 
 # Venice pricing estimates (USD) — updated 2026
 # These are approximations; actual pricing may vary.
-PRICING = {
+PRICING: dict[str, dict[str, Any]] = {
     "text": {
         "deepseek-v3.2": {"input": 0.0014, "output": 0.0028},  # per 1K tokens
         "llama-3.3-70b": {"input": 0.0015, "output": 0.0030},

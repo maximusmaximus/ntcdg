@@ -347,7 +347,7 @@ class TraditionalDeckRegistry:
 
         generated_symbols: list[dict[str, Any]] = []
         failed_symbols: list[dict[str, Any]] = []
-        iterator = range(len(missing))
+        iterator: Any = range(len(missing))
         if HAS_TQDM:
             iterator = tqdm(iterator, desc="Generating Traditional Symbols", unit="symbol", ncols=110)
 
@@ -444,7 +444,7 @@ def _safe_generate_symbol(**kwargs: Any) -> str | None:
         return None
 
 
-def load_symbols_config(symbols_file: str = None) -> dict[str, Any]:
+def load_symbols_config(symbols_file: str | None = None) -> dict[str, Any]:
     """
     Load symbol definitions from a JSON file.
 
@@ -536,7 +536,7 @@ def generate_symbol_images(
 
     logger.info(f"Generating {len(need_gen)} symbol images with cohesive style...")
 
-    iterator = range(len(need_gen))
+    iterator: Any = range(len(need_gen))
     if HAS_TQDM:
         iterator = tqdm(iterator, desc="Generating Symbols", unit="symbol", ncols=110)
 

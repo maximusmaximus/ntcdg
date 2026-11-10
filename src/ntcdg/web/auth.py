@@ -133,7 +133,8 @@ def check_csrf(request: Request, submitted: str | None = None) -> None:
 async def check_csrf_form(request: Request) -> dict[str, Any]:
     """Parse a form body and verify its CSRF token. Returns the form as a dict."""
     form = await request.form()
-    check_csrf(request, form.get(CSRF_FIELD) if form is not None else None)
+    raw_tok = form.get(CSRF_FIELD) if form is not None else None
+    check_csrf(request, raw_tok if isinstance(raw_tok, str) else None)
     return {k: v for k, v in form.items()}
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from typing import Any
 
 from .config import logger
 
@@ -94,7 +95,7 @@ def _find_font(font_path: str | None = None, size: int = 40):
 
 
 def _draw_text_with_shadow(
-    draw: ImageDraw.Draw,
+    draw: Any,
     text: str,
     position: tuple,
     font,
@@ -118,7 +119,7 @@ def overlay_card_text(
     image_path: str,
     title: str,
     number_text: str,
-    font_path: str = None,
+    font_path: str | None = None,
     text_color: tuple = DEFAULT_TEXT_COLOR,
 ) -> str:
     """
@@ -245,7 +246,7 @@ def _crop_to_fill(img, target_w, target_h):
         img = img.crop((0, offset, img_w, offset + new_h))
 
     # Fallback to LANCZOS directly if available, or just resize
-    resample = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+    resample = getattr(Image, "Resampling", Image).LANCZOS
     return img.resize((target_w, target_h), resample)
 
 
@@ -296,7 +297,7 @@ def compose_card(
     title: str,
     card_number: str = "",
     card_type: str = "",
-    font_path: str = "",
+    font_path: str | None = "",
     frame_color: tuple = (200, 180, 130),  # warm gold
     bg_color: tuple = (10, 10, 10),  # near black
     text_color: tuple = (212, 195, 150),  # gold text

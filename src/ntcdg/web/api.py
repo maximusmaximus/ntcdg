@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -167,27 +168,29 @@ async def uploads_create(request: Request):
     user = require_api_user(request)
     st = state(request)
     form = await request.form()
-    auth.check_csrf(request, form.get(auth.CSRF_FIELD))
+    csrf_tok = form.get(auth.CSRF_FIELD)
+    auth.check_csrf(request, csrf_tok if isinstance(csrf_tok, str) else None)
     kind = str(form.get("kind") or "image")
-    files = [f for f in form.getlist("file") if hasattr(f, "read")]
+    files: list[Any] = [f for f in form.getlist("file") if hasattr(f, "read")]
     if not files:
         return _error("Choose at least one file to upload.")
     if len(files) > 30:
         return _error("At most 30 files per upload.")
     results, errors = [], []
     for f in files:
+        fname = str(getattr(f, "filename", "") or "")
         data = await f.read(st.settings.max_upload_bytes + 1)
         try:
             if kind == "symbols_json":
                 results.append(webfiles.save_symbols_json_upload(
-                    st.db, user, f.filename or "", data, st.settings.max_upload_bytes))
+                    st.db, user, fname, data, st.settings.max_upload_bytes))
             elif kind == "image":
                 results.append(webfiles.save_image_upload(
-                    st.db, user, f.filename or "", data, st.settings.max_upload_bytes))
+                    st.db, user, fname, data, st.settings.max_upload_bytes))
             else:
                 return _error("kind must be 'image' or 'symbols_json'")
         except webfiles.FileInputError as e:
-            errors.append({"name": f.filename or "", "error": str(e)})
+            errors.append({"name": fname, "error": str(e)})
     status = 200 if results else 400
     return JSONResponse({"uploads": results, "errors": errors}, status_code=status)
 
@@ -211,7 +214,8 @@ def upload_get(request: Request, upload_id: str):
 async def upload_delete(request: Request, upload_id: str):
     user = require_api_user(request)
     form = await request.form()
-    auth.check_csrf(request, form.get(auth.CSRF_FIELD))
+    csrf_tok = form.get(auth.CSRF_FIELD)
+    auth.check_csrf(request, csrf_tok if isinstance(csrf_tok, str) else None)
     if not webfiles.delete_upload(state(request).db, user, upload_id):
         return _error("Upload not found", 404)
     return {"deleted": upload_id}

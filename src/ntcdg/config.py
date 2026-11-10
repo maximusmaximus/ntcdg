@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime
 from functools import wraps
+from typing import Any
 
 # --- Optional Dependencies (graceful fallback) ---
 try:
@@ -17,8 +18,9 @@ except ImportError:
 
 try:
     import requests as _requests
-    requests = _requests
+    requests: Any = _requests
 except ImportError:
+    _requests = None  # type: ignore[assignment]
     requests = None
 
 try:
@@ -237,6 +239,7 @@ def retry_on_failure(max_retries: int = 2, delay: float = 1.5, backoff: float = 
             logger.error(
                 f"{func.__name__} failed after {max_retries+1} attempts: {last_exception}"
             )
+            assert last_exception is not None
             raise last_exception
         return wrapper
     return decorator
