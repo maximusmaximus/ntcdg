@@ -49,12 +49,30 @@ except ImportError:
 
 
 # ==================== CONFIG ====================
-class Config:
-    HISTORY_FILE = "ntcdg_history.json"
+_DYNAMIC_SUBPATHS = {
+    "IMAGES_DIR": "images",
+    "LOGS_DIR": "logs",
+    "DECKS_INDEX_FILE": "decks_index.json",
+    "HISTORY_FILE": "ntcdg_history.json",
+}
+
+
+class _ConfigMeta(type):
+    """Dynamically resolves derived paths under ``Config.OUTPUT_DIR`` unless overridden."""
+
+    def __getattr__(cls, name: str) -> str:
+        rel = _DYNAMIC_SUBPATHS.get(name)
+        if rel is not None:
+            return os.path.join(cls.OUTPUT_DIR, rel)
+        raise AttributeError(f"type object {cls.__name__!r} has no attribute {name!r}")
+
+
+class Config(metaclass=_ConfigMeta):
     OUTPUT_DIR = "generated_decks"
-    IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
-    LOGS_DIR = os.path.join(OUTPUT_DIR, "logs")
-    DECKS_INDEX_FILE = os.path.join(OUTPUT_DIR, "decks_index.json")
+    IMAGES_DIR: str
+    LOGS_DIR: str
+    DECKS_INDEX_FILE: str
+    HISTORY_FILE: str
 
     # --- Model defaults (best-fit per task as of 2026) ---
     # Text: llama-3.3-70b — fast structured JSON, no reasoning overhead

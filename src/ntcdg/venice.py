@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import RETRYABLE_STATUS_CODES, Config, _requests, logger, requests
 from .models import Card
+from .runtime import current_usage_tracker
 
 _SESSION_LOCAL = threading.local()
 
@@ -228,6 +229,7 @@ def analyze_with_venice(
         return {"venice_error": "Venice API key not provided"}
     if not requests:
         return {"venice_error": "Missing requests library"}
+    tracker = tracker or current_usage_tracker()
 
     system = (
         "You are an expert tarot symbologist and card designer. "
@@ -351,6 +353,7 @@ def generate_image_with_venice(
         return {"image_error": "Venice API key not provided"}
     if not requests:
         return {"image_error": "Missing requests library"}
+    tracker = tracker or current_usage_tracker()
 
     time.sleep(rate_limit_delay)
 
@@ -532,6 +535,7 @@ def edit_image_with_venice(
     """
     if not api_key or not requests:
         return {"image_error": "Missing API key or requests"}
+    tracker = tracker or current_usage_tracker()
 
     used_model = model or Config.DEFAULT_EDIT_MODEL
     if rate_limit_delay > 0:
@@ -594,6 +598,7 @@ def multi_edit_image_with_venice(
     """
     if not api_key or not requests:
         return {"image_error": "Missing API key or requests"}
+    tracker = tracker or current_usage_tracker()
     valid_paths = [p for p in (image_paths or []) if p and os.path.isfile(p)]
     if not valid_paths:
         return {"image_error": "No valid input images for multi-edit"}
@@ -678,16 +683,18 @@ def generate_card_back(
     image_size: str = Config.DEFAULT_IMAGE_SIZE,
     negative_prompt: str = "",
     rate_limit_delay: float = 1.5,
+    tracker=None,
 ) -> str:
     """
     Generate a single card back design image via Venice.
 
-    The back is a single design used for all cards in the deck.
-    Returns the path to the saved image, or "" on failure.
+    The back is saved inside ``deck_images_dir(deck_name)`` so each deck remains
+    self-contained. Returns the path to the saved image, or "" on failure.
     """
     if not api_key or not requests:
         logger.error("Missing API key or requests library")
         return ""
+    tracker = tracker or current_usage_tracker()
 
     time.sleep(rate_limit_delay)
     neg = negative_prompt or Config.DEFAULT_NEGATIVE_PROMPT
@@ -704,16 +711,25 @@ def generate_card_back(
 
         b64 = _extract_image_b64(data)
         if b64:
-            os.makedirs(Config.IMAGES_DIR, exist_ok=True)
+            from .storage import deck_images_dir
+
+            target_dir = deck_images_dir(deck_name)
+            os.makedirs(target_dir, exist_ok=True)
             filename = f"{deck_name}_BACK.png"
-            filepath = os.path.join(Config.IMAGES_DIR, filename)
+            filepath = os.path.join(target_dir, filename)
             with open(filepath, "wb") as f:
                 f.write(base64.b64decode(b64))
+            if tracker:
+                tracker.record_image_call(model, image_size, success=True, purpose="card_back")
             logger.info(f"Card back saved: {filepath}")
             return filepath
 
+        if tracker:
+            tracker.record_image_call(model, image_size, success=False, purpose="card_back")
         logger.error("No image data in Venice response for card back")
         return ""
     except Exception as e:
+        if tracker:
+            tracker.record_image_call(model, image_size, success=False, purpose="card_back")
         logger.error(f"Card back generation failed: {e}")
         return ""

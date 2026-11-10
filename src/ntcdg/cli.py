@@ -491,30 +491,18 @@ Config: Save defaults in ~/.ntcdgrc (run --init-config for a template)
                 print(f"    - {u.get('name')}")
 
     elif args.deck_coverage:
-        from .storage import load_deck
-        from .symbols import TraditionalDeckRegistry
-        deck = load_deck(args.deck_coverage)
-        if not deck:
-            print(f"Deck '{args.deck_coverage}' not found.")
+        from .services import audit_traditional_coverage
+
+        audit = audit_traditional_coverage(args.deck_coverage)
+        if "error" in audit:
+            print(f"{audit['error']}.")
         else:
-            all_canonical = TraditionalDeckRegistry.get_all_symbols()
-            hits = set()
-            for card in deck:
-                c_symbols = card.symbols or []
-                card_canons = TraditionalDeckRegistry.get_symbols_for_card(card.title)
-                for canon in card_canons:
-                    cid = canon["id"]
-                    cname = canon["name"].lower()
-                    ckws = [kw.lower() for kw in canon.get("keywords", [])]
-                    for cs in c_symbols:
-                        cs_lower = cs.lower()
-                        if cname in cs_lower or any(kw in cs_lower for kw in ckws):
-                            hits.add(cid)
-                            break
-            pct = round((len(hits) / len(all_canonical)) * 100.0, 1) if all_canonical else 0.0
+            hits = audit["canonical_symbols_covered"]
+            total_canon = audit["total_canonical_symbols"]
+            pct = audit["traditional_coverage_percentage"]
             print(f"\nTraditional Symbol Coverage for Deck '{args.deck_coverage}':")
-            print(f"  Cards: {len(deck)}")
-            print(f"  Traditional Symbols Represented: {len(hits)}/{len(all_canonical)} ({pct}%)\n")
+            print(f"  Cards: {audit['total_cards']}")
+            print(f"  Traditional Symbols Represented: {hits}/{total_canon} ({pct}%)\n")
 
     elif args.calibration_sheet:
         from .duplex import create_calibration_pdf

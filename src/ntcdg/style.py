@@ -14,6 +14,7 @@ from typing import Any
 
 from .config import Config, logger, requests
 from .models import Card
+from .runtime import current_usage_tracker
 from .venice import _extract_text_content, venice_post
 
 
@@ -78,6 +79,7 @@ def extract_style_from_images(
         ),
     })
 
+    tracker = current_usage_tracker()
     try:
         resp = venice_post(
             Config.VENICE_TEXT_URL,
@@ -91,10 +93,21 @@ def extract_style_from_images(
             timeout=90,
         )
         data = resp.json()
+        if tracker:
+            u = data.get("usage", {})
+            tracker.record_text_call(
+                vision_model,
+                prompt_tokens=u.get("prompt_tokens", 0),
+                completion_tokens=u.get("completion_tokens", 0),
+                success=True,
+                purpose="style_vision",
+            )
         style = _extract_text_content(data)
         logger.info(f"Extracted visual style from {len(content) - 1} images")
         return style
     except Exception as e:
+        if tracker:
+            tracker.record_text_call(vision_model, success=False, purpose="style_vision")
         logger.warning(f"Vision style extraction failed: {e}")
         return ""
 
@@ -119,6 +132,7 @@ def generate_style_from_text(
 
     symbols_text = ", ".join(symbol_descriptions[:10]) if symbol_descriptions else "none"
 
+    tracker = current_usage_tracker()
     try:
         resp = venice_post(
             Config.VENICE_TEXT_URL,
@@ -156,10 +170,22 @@ def generate_style_from_text(
             },
             timeout=90,
         )
-        style = _extract_text_content(resp.json())
+        data = resp.json()
+        if tracker:
+            u = data.get("usage", {})
+            tracker.record_text_call(
+                text_model,
+                prompt_tokens=u.get("prompt_tokens", 0),
+                completion_tokens=u.get("completion_tokens", 0),
+                success=True,
+                purpose="style_text",
+            )
+        style = _extract_text_content(data)
         logger.info("Generated deck style from text description")
         return style
     except Exception as e:
+        if tracker:
+            tracker.record_text_call(text_model, success=False, purpose="style_text")
         logger.warning(f"Text style generation failed: {e}")
         return ""
 
@@ -216,6 +242,7 @@ def refine_card_prompt(
         return _build_fallback_prompt(card, style_prefix)
 
     text_model = model or Config.DEFAULT_TEXT_MODEL
+    tracker = current_usage_tracker()
 
     try:
         resp = venice_post(
@@ -262,7 +289,17 @@ def refine_card_prompt(
             },
             timeout=90,
         )
-        prompt = _extract_text_content(resp.json())
+        data = resp.json()
+        if tracker:
+            u = data.get("usage", {})
+            tracker.record_text_call(
+                text_model,
+                prompt_tokens=u.get("prompt_tokens", 0),
+                completion_tokens=u.get("completion_tokens", 0),
+                success=True,
+                purpose="prompt_refinement",
+            )
+        prompt = _extract_text_content(data)
 
         # Strip any markdown quotes the model might add
         if prompt.startswith('"') and prompt.endswith('"'):
@@ -271,6 +308,8 @@ def refine_card_prompt(
         logger.debug(f"Refined prompt for '{card.title}' ({len(prompt)} chars)")
         return prompt
     except Exception as e:
+        if tracker:
+            tracker.record_text_call(text_model, success=False, purpose="prompt_refinement")
         logger.warning(f"Prompt refinement failed for '{card.title}': {e}")
         return _build_fallback_prompt(card, style_prefix)
 
