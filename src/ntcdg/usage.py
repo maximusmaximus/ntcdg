@@ -17,17 +17,22 @@ PRICING = {
         "deepseek-v3.2": {"input": 0.0014, "output": 0.0028},  # per 1K tokens
         "llama-3.3-70b": {"input": 0.0015, "output": 0.0030},
         "qwen3-vl-235b-a22b": {"input": 0.0018, "output": 0.0035},
+        "z-ai-glm-5v-turbo": {"input": 0.0016, "output": 0.0032},
         "qwen2.5-vl": {"input": 0.0020, "output": 0.0040},
         "_default": {"input": 0.0015, "output": 0.0030},
     },
     "image": {
-        "qwen-image-3-pro": 0.030,   # SOTA default
-        "flux-2-pro": 0.030,         # per image
+        "qwen-image-3-pro": 0.030,     # SOTA default
+        "qwen-image-3": 0.025,
+        "nano-banana-pro-edit": 0.035, # Multi-reference layered edit
+        "flux-2-pro": 0.030,           # per image
         "flux-2-max": 0.035,
         "flux-3-image": 0.040,
         "gpt-image-2-5-flare": 0.035,
         "recraft-v4-pro": 0.035,
-        "flux-2-max-edit": 0.040,    # legacy edit
+        "ideogram-v4-5": 0.035,
+        "seedream-v5-pro": 0.030,
+        "flux-2-max-edit": 0.040,      # legacy edit
         "_default": 0.030,
     },
 }
@@ -125,26 +130,45 @@ class UsageTracker:
         return self.prompt_tokens + self.completion_tokens
 
     def estimate_cost(self) -> dict[str, float]:
-        """Estimate total cost in USD."""
-        # Text cost
-        text_pricing = PRICING["text"].get(
-            self.text_model, PRICING["text"]["_default"],
-        )
-        text_cost = (
-            (self.prompt_tokens / 1000) * text_pricing["input"]
-            + (self.completion_tokens / 1000) * text_pricing["output"]
-        )
+        """Estimate total cost in USD using per-call models when available."""
+        if self.call_log:
+            text_cost = 0.0
+            image_cost = 0.0
+            for entry in self.call_log:
+                if not entry.get("success", True):
+                    continue
+                ctype = entry.get("type")
+                cmodel = entry.get("model", "")
+                if ctype == "text":
+                    tp = PRICING["text"].get(cmodel, PRICING["text"]["_default"])
+                    text_cost += (
+                        (entry.get("prompt_tokens", 0) / 1000) * tp["input"]
+                        + (entry.get("completion_tokens", 0) / 1000) * tp["output"]
+                    )
+                elif ctype == "image":
+                    ip = PRICING["image"].get(cmodel, PRICING["image"]["_default"])
+                    image_cost += ip
+        else:
+            # Fallback for legacy summaries reconstructed without a call_log
+            text_pricing = PRICING["text"].get(
+                self.text_model, PRICING["text"]["_default"],
+            )
+            text_cost = (
+                (self.prompt_tokens / 1000) * text_pricing["input"]
+                + (self.completion_tokens / 1000) * text_pricing["output"]
+            )
+            img_price = PRICING["image"].get(
+                self.image_model, PRICING["image"]["_default"],
+            )
+            successful_images = max(0, self.image_calls - self.image_calls_failed)
+            image_cost = successful_images * img_price
 
-        # Image cost
-        img_price = PRICING["image"].get(
-            self.image_model, PRICING["image"]["_default"],
-        )
-        image_cost = self.image_calls * img_price
-
+        txt_rounded = round(text_cost, 4)
+        img_rounded = round(image_cost, 4)
         return {
-            "text": round(text_cost, 4),
-            "image": round(image_cost, 4),
-            "total": round(text_cost + image_cost, 4),
+            "text": txt_rounded,
+            "image": img_rounded,
+            "total": round(txt_rounded + img_rounded, 4),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,6 +193,7 @@ class UsageTracker:
             "symbols_file": self.symbols_file,
             "elapsed_seconds": round(self.elapsed_seconds, 1),
             "estimated_cost_usd": costs,
+            "call_log": self.call_log[-500:],
         }
 
     @classmethod
@@ -190,6 +215,7 @@ class UsageTracker:
         tracker.symbol_mode = data.get("symbol_mode", "")
         tracker.symbol_names = data.get("symbol_names", [])
         tracker.symbols_file = data.get("symbols_file", "")
+        tracker.call_log = list(data.get("call_log") or [])
         return tracker
 
 
@@ -221,6 +247,7 @@ def merge_usage_dicts(previous: dict[str, Any] | None, current: dict[str, Any]) 
             merged[str_key] = previous[str_key]
     if not merged.get("symbol_names") and previous.get("symbol_names"):
         merged["symbol_names"] = previous["symbol_names"]
+    merged["call_log"] = (list(previous.get("call_log") or []) + list(current.get("call_log") or []))[-500:]
     return merged
 
 

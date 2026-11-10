@@ -202,3 +202,30 @@ def check_cancelled() -> None:
     ev = _cancel_event.get()
     if ev is not None and ev.is_set():
         raise JobCancelledError("Job cancelled by user")
+
+
+# ==================== SCOPED USAGE TRACKER ====================
+
+_usage_tracker: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "ntcdg_usage_tracker", default=None,
+)
+
+
+@contextlib.contextmanager
+def usage_tracker_scope(tracker: Any) -> Iterator[None]:
+    """Bind a :class:`~ntcdg.usage.UsageTracker` for the current context.
+
+    Every Venice text, vision, image generation, multi-edit, symbol, and card-back
+    helper automatically records its call to ``current_usage_tracker()`` when no
+    explicit ``tracker`` argument is supplied.
+    """
+    token = _usage_tracker.set(tracker)
+    try:
+        yield
+    finally:
+        _usage_tracker.reset(token)
+
+
+def current_usage_tracker() -> Any:
+    """Return the active context's :class:`~ntcdg.usage.UsageTracker`, or ``None``."""
+    return _usage_tracker.get()

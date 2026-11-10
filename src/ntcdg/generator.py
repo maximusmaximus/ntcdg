@@ -9,12 +9,13 @@ from typing import Any
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
 from .overlay import compose_card, get_card_number_text
-from .runtime import check_cancelled, current_event_sink
+from .runtime import check_cancelled, current_event_sink, usage_tracker_scope
 from .storage import (
     deck_images_dir,
     load_deck,
     load_decks_index,
     preview_raw_dir,
+    record_deck_history,
     save_deck,
     update_deck_index,
     update_deck_meta,
@@ -651,6 +652,117 @@ def generate_deck(
     tracker.image_model = image_model
     tracker.image_size = image_size
 
+    return _run_deck_generation_scoped(
+        tracker=tracker,
+        name=name,
+        num_cards=num_cards,
+        deck_vibe=deck_vibe,
+        deck_prompt=deck_prompt,
+        venice_key=venice_key,
+        analyze=analyze,
+        text_model=text_model,
+        generate_images=generate_images,
+        image_model=image_model,
+        image_size=image_size,
+        negative_prompt=negative_prompt,
+        rate_limit=rate_limit,
+        interactive=interactive,
+        symbol_mode=symbol_mode,
+        symbols_file=symbols_file,
+        font_path=font_path,
+        resume=resume,
+        preview=preview,
+        traditional_mode=traditional_mode,
+        auto_complete_symbols=auto_complete_symbols,
+        emit=emit,
+        card_images_dir=card_images_dir,
+        saved_meta=saved_meta,
+    )
+
+
+def _run_deck_generation_scoped(
+    *,
+    tracker: UsageTracker,
+    name: str,
+    num_cards: int,
+    deck_vibe: str,
+    deck_prompt: str,
+    venice_key: str | None,
+    analyze: bool,
+    text_model: str,
+    generate_images: bool,
+    image_model: str,
+    image_size: str,
+    negative_prompt: str,
+    rate_limit: float,
+    interactive: bool,
+    symbol_mode: str,
+    symbols_file: str | None,
+    font_path: str | None,
+    resume: bool,
+    preview: bool,
+    traditional_mode: bool,
+    auto_complete_symbols: bool,
+    emit: Callable[..., None],
+    card_images_dir: str,
+    saved_meta: dict[str, Any],
+):
+    with usage_tracker_scope(tracker):
+        return _execute_deck_generation(
+            tracker=tracker,
+            name=name,
+            num_cards=num_cards,
+            deck_vibe=deck_vibe,
+            deck_prompt=deck_prompt,
+            venice_key=venice_key,
+            analyze=analyze,
+            text_model=text_model,
+            generate_images=generate_images,
+            image_model=image_model,
+            image_size=image_size,
+            negative_prompt=negative_prompt,
+            rate_limit=rate_limit,
+            interactive=interactive,
+            symbol_mode=symbol_mode,
+            symbols_file=symbols_file,
+            font_path=font_path,
+            resume=resume,
+            preview=preview,
+            traditional_mode=traditional_mode,
+            auto_complete_symbols=auto_complete_symbols,
+            emit=emit,
+            card_images_dir=card_images_dir,
+            saved_meta=saved_meta,
+        )
+
+
+def _execute_deck_generation(
+    *,
+    tracker: UsageTracker,
+    name: str,
+    num_cards: int,
+    deck_vibe: str,
+    deck_prompt: str,
+    venice_key: str | None,
+    analyze: bool,
+    text_model: str,
+    generate_images: bool,
+    image_model: str,
+    image_size: str,
+    negative_prompt: str,
+    rate_limit: float,
+    interactive: bool,
+    symbol_mode: str,
+    symbols_file: str | None,
+    font_path: str | None,
+    resume: bool,
+    preview: bool,
+    traditional_mode: bool,
+    auto_complete_symbols: bool,
+    emit: Callable[..., None],
+    card_images_dir: str,
+    saved_meta: dict[str, Any],
+):
     logger.info(f"Starting deck: {name} ({num_cards} cards)")
 
     # --- Validate API key ---
@@ -686,7 +798,12 @@ def generate_deck(
             target_scope=scope,
             rate_limit=rate_limit,
         )
-    elif symbol_mode == "generate" and generate_images and venice_key:
+    elif (
+        symbol_mode == "generate"
+        and generate_images
+        and venice_key
+        and not (resume and saved_meta.get("deck_style"))
+    ):
         logger.info("Generating cohesive symbol images before card generation...")
         symbols_config = generate_symbol_images(
             symbols_config, name, deck_prompt, venice_key, image_model, rate_limit,
@@ -967,6 +1084,7 @@ def generate_deck(
         emit("card_done", position=position, card=card.to_dict())
 
     save_deck(deck, name)
+    record_deck_history(name, deck)
 
     # --- Finalize and persist usage stats ---
     tracker.finalize()

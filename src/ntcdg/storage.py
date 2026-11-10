@@ -17,6 +17,20 @@ DECK_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 # Serialises read-modify-write cycles on the shared index file when several
 # jobs (web workers, MCP calls) touch it concurrently in one process.
 _INDEX_LOCK = threading.RLock()
+_HISTORY_LOCK = threading.RLock()
+_DECK_LOCKS_GUARD = threading.Lock()
+_DECK_LOCKS: dict[str, threading.RLock] = {}
+
+
+def deck_lock(deck_name: str) -> threading.RLock:
+    """Return a per-deck re-entrant lock to serialise writes to ``deck_name``."""
+    validate_deck_name(deck_name)
+    with _DECK_LOCKS_GUARD:
+        lock = _DECK_LOCKS.get(deck_name)
+        if lock is None:
+            lock = threading.RLock()
+            _DECK_LOCKS[deck_name] = lock
+        return lock
 
 
 def validate_deck_name(deck_name: str) -> str:
@@ -333,19 +347,52 @@ def save_deck(deck: list[Card], deck_name: str, *, export: bool = True):
     during long generations so a crash never loses completed cards.
     """
     validate_deck_name(deck_name)
-    json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
-    _atomic_write_json(json_path, [c.to_dict() for c in deck])
-    if export:
-        export_spreadsheet(deck, deck_name)
-    update_deck_index(deck_name, len(deck))
+    with deck_lock(deck_name):
+        json_path = os.path.join(Config.OUTPUT_DIR, f"{deck_name}.json")
+        _atomic_write_json(json_path, [c.to_dict() for c in deck])
+        if export:
+            export_spreadsheet(deck, deck_name)
+        update_deck_index(deck_name, len(deck))
 
 
 # ==================== HISTORY ====================
 def load_history() -> dict[str, Any]:
-    if os.path.exists(Config.HISTORY_FILE):
-        with open(Config.HISTORY_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {"cards": [], "decks": []}
+    with _HISTORY_LOCK:
+        if os.path.exists(Config.HISTORY_FILE):
+            try:
+                with open(Config.HISTORY_FILE, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    data.setdefault("cards", [])
+                    data.setdefault("decks", [])
+                    return data
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"History file unreadable ({Config.HISTORY_FILE}): {e}")
+        return {"cards": [], "decks": []}
+
+
+def record_deck_history(deck_name: str, deck: list[Card]) -> None:
+    """Persist card symbol fingerprints for ``deck_name`` into ``Config.HISTORY_FILE``."""
+    validate_deck_name(deck_name)
+    with _HISTORY_LOCK:
+        history = load_history()
+        decks_list = [d for d in history.get("decks", []) if d != deck_name]
+        decks_list.append(deck_name)
+        cards_list = [
+            entry for entry in history.get("cards", [])
+            if entry.get("deck") != deck_name
+        ]
+        for card in deck:
+            if card.symbols:
+                cards_list.append({
+                    "deck": deck_name,
+                    "position": card.position,
+                    "title": card.title,
+                    "symbols": list(card.symbols),
+                })
+        history["decks"] = decks_list[-500:]
+        history["cards"] = cards_list[-5000:]
+        _atomic_write_json(Config.HISTORY_FILE, history)
 
 
 def is_novel(card: Card, history: dict[str, Any]) -> bool:
@@ -407,37 +454,38 @@ def edit_card_field(
         print(f"Invalid field '{field}'. Valid: {', '.join(sorted(valid_fields))}")
         return False
 
-    deck = load_deck(deck_name)
-    if not deck:
-        print(f"Deck '{deck_name}' not found.")
-        return False
+    with deck_lock(deck_name):
+        deck = load_deck(deck_name)
+        if not deck:
+            print(f"Deck '{deck_name}' not found.")
+            return False
 
-    card = next((c for c in deck if c.position == card_position), None)
-    if not card:
-        print(f"Card {card_position} not found in deck '{deck_name}'.")
-        return False
+        card = next((c for c in deck if c.position == card_position), None)
+        if not card:
+            print(f"Card {card_position} not found in deck '{deck_name}'.")
+            return False
 
-    old_value = getattr(card, field, "")
-    if field == "title":
-        if card.title and not card.canonical_title:
-            card.canonical_title = card.title
-        card.title = value
-        if card.venice_title is not None:
-            card.venice_title = value
-        if card.new_title is not None:
+        old_value = getattr(card, field, "")
+        if field == "title":
+            if card.title and not card.canonical_title:
+                card.canonical_title = card.title
+            card.title = value
+            if card.venice_title is not None:
+                card.venice_title = value
+            if card.new_title is not None:
+                card.new_title = value
+        elif field == "new_title":
             card.new_title = value
-    elif field == "new_title":
-        card.new_title = value
-        if card.venice_title is not None:
-            card.venice_title = value
-    else:
-        setattr(card, field, value)
+            if card.venice_title is not None:
+                card.venice_title = value
+        else:
+            setattr(card, field, value)
 
-    if field in ("title", "new_title", "venice_title"):
-        from .overlay import recompose_card
-        recompose_card(card)
+        if field in ("title", "new_title", "venice_title"):
+            from .overlay import recompose_card
+            recompose_card(card)
 
-    save_deck(deck, deck_name)
+        save_deck(deck, deck_name)
     print(f"Updated card {card_position} [{field}]:")
     print(f"  Old: {(old_value or '(empty)')[:80]}")
     print(f"  New: {value[:80]}")
@@ -445,63 +493,83 @@ def edit_card_field(
 
 
 def delete_deck(deck_name: str, confirm: bool = True) -> bool:
-    """Delete a deck and all its associated files."""
-    deck = load_deck(deck_name)
-    if not deck:
-        print(f"Deck '{deck_name}' not found.")
-        return False
+    """Delete a deck and all its associated files (cards, backs, symbols, previews)."""
+    import shutil
 
-    if confirm:
-        print(f"\nThis will delete deck '{deck_name}':")
-        print(f"  - {len(deck)} card records")
-        img_count = sum(
-            1 for c in deck
-            if c.image_path and os.path.exists(str(c.image_path))
-        )
-        print(f"  - {img_count} card images")
-        print("  - All associated PDFs and spreadsheets")
-        response = input("\nType 'DELETE' to confirm: ")
-        if response != "DELETE":
-            print("Cancelled.")
+    from .symbols import symbols_dir_for
+
+    with deck_lock(deck_name):
+        deck = load_deck(deck_name)
+        if not deck:
+            print(f"Deck '{deck_name}' not found.")
             return False
 
-    # Remove card images (including preserved unframed sidecars)
-    from .overlay import unframed_image_path
+        if confirm:
+            print(f"\nThis will delete deck '{deck_name}':")
+            print(f"  - {len(deck)} card records")
+            img_count = sum(
+                1 for c in deck
+                if c.image_path and os.path.exists(str(c.image_path))
+            )
+            print(f"  - {img_count} card images")
+            print("  - All associated PDFs, symbols, previews, and spreadsheets")
+            response = input("\nType 'DELETE' to confirm: ")
+            if response != "DELETE":
+                print("Cancelled.")
+                return False
 
-    for card in deck:
-        if card.image_path:
-            if os.path.exists(str(card.image_path)):
-                os.remove(card.image_path)
-            raw_sidecar = card.raw_image_path or unframed_image_path(str(card.image_path))
-            if raw_sidecar and os.path.exists(raw_sidecar):
-                os.remove(raw_sidecar)
+        # Remove card images (including preserved unframed sidecars)
+        from .overlay import unframed_image_path
 
-    # Remove deck files (JSON, PDFs, spreadsheet, bundle)
-    for filepath in deck_artifact_files(deck_name, include_json=True, include_bundle=True):
-        os.remove(filepath)
-        logger.info(f"Removed: {filepath}")
+        for card in deck:
+            if card.image_path:
+                if os.path.exists(str(card.image_path)):
+                    os.remove(card.image_path)
+                raw_sidecar = card.raw_image_path or unframed_image_path(str(card.image_path))
+                if raw_sidecar and os.path.exists(raw_sidecar):
+                    os.remove(raw_sidecar)
 
-    # Remove back image
-    index = load_decks_index()
-    meta = index.get(deck_name, {})
-    back = meta.get("back_image", "")
-    if back and os.path.exists(back):
-        os.remove(back)
+        # Remove deck files (JSON, PDFs, spreadsheet, bundle)
+        for filepath in deck_artifact_files(deck_name, include_json=True, include_bundle=True):
+            os.remove(filepath)
+            logger.info(f"Removed: {filepath}")
 
-    # Remove the deck's own image folder (and empty _unframed dir) if nothing else is left in it
-    img_dir = deck_images_dir(deck_name)
-    unframed_dir = os.path.join(img_dir, "_unframed")
-    if os.path.isdir(unframed_dir) and not os.listdir(unframed_dir):
-        os.rmdir(unframed_dir)
-    if os.path.isdir(img_dir) and not os.listdir(img_dir):
-        os.rmdir(img_dir)
-
-    # Remove from index
-    with _INDEX_LOCK:
+        # Remove back image
         index = load_decks_index()
-        if deck_name in index:
-            del index[deck_name]
-            save_decks_index(index)
+        meta = index.get(deck_name, {})
+        back = meta.get("back_image", "")
+        if back and os.path.exists(back):
+            os.remove(back)
+
+        # Remove the deck's own image folder (and _unframed / back leftovers),
+        # registered/generated symbols dir, and style preview files
+        img_dir = deck_images_dir(deck_name)
+        if os.path.isdir(img_dir):
+            shutil.rmtree(img_dir, ignore_errors=True)
+
+        sym_dir = symbols_dir_for(deck_name)
+        if os.path.isdir(sym_dir):
+            shutil.rmtree(sym_dir, ignore_errors=True)
+
+        raw_prev_dir = preview_raw_dir(deck_name)
+        if os.path.isdir(raw_prev_dir):
+            shutil.rmtree(raw_prev_dir, ignore_errors=True)
+
+        previews_dir = os.path.join(Config.IMAGES_DIR, "previews")
+        if os.path.isdir(previews_dir):
+            prev_prefix = f"{deck_name}_preview_"
+            for fname in os.listdir(previews_dir):
+                if fname.startswith(prev_prefix) and fname.lower().endswith(".png"):
+                    with_path = os.path.join(previews_dir, fname)
+                    if os.path.isfile(with_path):
+                        os.remove(with_path)
+
+        # Remove from index
+        with _INDEX_LOCK:
+            index = load_decks_index()
+            if deck_name in index:
+                del index[deck_name]
+                save_decks_index(index)
 
     print(f"Deck '{deck_name}' deleted.")
     return True
@@ -509,65 +577,73 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
 
 def clone_deck(source_name: str, dest_name: str) -> bool:
     """Clone a deck with all its images under a new name."""
+    import contextlib
+    import copy
     import shutil
 
-    deck = load_deck(source_name)
-    if not deck:
-        print(f"Source deck '{source_name}' not found.")
-        return False
+    validate_deck_name(source_name)
+    validate_deck_name(dest_name)
+    ordered_locks = [deck_lock(n) for n in sorted({source_name, dest_name})]
+    with contextlib.ExitStack() as stack:
+        for lk in ordered_locks:
+            stack.enter_context(lk)
 
-    existing = load_deck(dest_name)
-    if existing:
-        print(f"Destination deck '{dest_name}' already exists.")
-        return False
+        deck = load_deck(source_name)
+        if not deck:
+            print(f"Source deck '{source_name}' not found.")
+            return False
 
-    # Clone card images with new names
-    cloned_deck = []
-    for card in deck:
-        import copy
-        new_card = copy.deepcopy(card)
+        existing = load_deck(dest_name)
+        if existing:
+            print(f"Destination deck '{dest_name}' already exists.")
+            return False
 
-        if card.image_path and os.path.exists(str(card.image_path)):
-            from .overlay import unframed_image_path
+        # Clone card images with new names
+        cloned_deck = []
+        for card in deck:
+            new_card = copy.deepcopy(card)
 
-            old_basename = os.path.basename(card.image_path)
-            new_basename = old_basename  # keep same filename
-            new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
-            os.makedirs(new_dir, exist_ok=True)
-            new_path = os.path.join(new_dir, new_basename)
-            shutil.copy2(card.image_path, new_path)
-            new_card.image_path = new_path
-            old_raw = card.raw_image_path or unframed_image_path(str(card.image_path))
-            if old_raw and os.path.exists(old_raw):
-                new_raw = unframed_image_path(new_path)
-                os.makedirs(os.path.dirname(new_raw), exist_ok=True)
-                shutil.copy2(old_raw, new_raw)
-                if card.raw_image_path:
-                    new_card.raw_image_path = new_raw
+            if card.image_path and os.path.exists(str(card.image_path)):
+                from .overlay import unframed_image_path
 
-        cloned_deck.append(new_card)
+                old_basename = os.path.basename(card.image_path)
+                new_basename = old_basename  # keep same filename
+                new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
+                os.makedirs(new_dir, exist_ok=True)
+                new_path = os.path.join(new_dir, new_basename)
+                shutil.copy2(card.image_path, new_path)
+                new_card.image_path = new_path
+                old_raw = card.raw_image_path or unframed_image_path(str(card.image_path))
+                if old_raw and os.path.exists(old_raw):
+                    new_raw = unframed_image_path(new_path)
+                    os.makedirs(os.path.dirname(new_raw), exist_ok=True)
+                    shutil.copy2(old_raw, new_raw)
+                    if card.raw_image_path:
+                        new_card.raw_image_path = new_raw
 
-    save_deck(cloned_deck, dest_name)
+            cloned_deck.append(new_card)
 
-    # Clone index entry
-    index = load_decks_index()
-    source_meta = index.get(source_name, {})
-    if source_meta:
-        # Copy the back image so deleting either deck never removes the other's back.
-        back = source_meta.get("back_image", "")
-        new_back = ""
-        if back and os.path.exists(back):
-            new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
-            os.makedirs(new_dir, exist_ok=True)
-            new_back = os.path.join(new_dir, f"back_{os.path.basename(back)}")
-            shutil.copy2(back, new_back)
-        update_deck_index(
-            dest_name, len(cloned_deck),
-            vibe=source_meta.get("vibe", ""),
-            theme=source_meta.get("theme", ""),
-            back_image=new_back,
-            back_prompt=source_meta.get("back_prompt", ""),
-        )
+        save_deck(cloned_deck, dest_name)
+
+        # Clone index entry
+        index = load_decks_index()
+        source_meta = index.get(source_name, {})
+        if source_meta:
+            # Copy the back image so deleting either deck never removes the other's back.
+            back = source_meta.get("back_image", "")
+            new_back = ""
+            if back and os.path.exists(back):
+                new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
+                os.makedirs(new_dir, exist_ok=True)
+                new_back = os.path.join(new_dir, f"back_{os.path.basename(back)}")
+                shutil.copy2(back, new_back)
+            update_deck_index(
+                dest_name, len(cloned_deck),
+                vibe=source_meta.get("vibe", ""),
+                theme=source_meta.get("theme", ""),
+                back_image=new_back,
+                back_prompt=source_meta.get("back_prompt", ""),
+            )
 
     print(f"Cloned '{source_name}' -> '{dest_name}' ({len(cloned_deck)} cards)")
     return True
