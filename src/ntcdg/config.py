@@ -93,6 +93,7 @@ class Config:
     VENICE_TEXT_URL = f"{VENICE_BASE_URL}/chat/completions"
     VENICE_IMAGE_URL = f"{VENICE_BASE_URL}/image/generate"
     VENICE_EDIT_URL = f"{VENICE_BASE_URL}/image/edit"
+    VENICE_MULTI_EDIT_URL = f"{VENICE_BASE_URL}/image/multi-edit"
     VENICE_MODELS_URL = f"{VENICE_BASE_URL}/models"
 
     NOVELTY_THRESHOLD = 0.55
@@ -151,7 +152,7 @@ def setup_logging():
 
     if not log.handlers:
         fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s")
-        fh = logging.FileHandler(log_file)
+        fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
         sh = logging.StreamHandler()
         sh.setFormatter(fmt)
@@ -162,11 +163,15 @@ def setup_logging():
 # Module-level logger — always available, handlers added by setup_logging()
 logger = logging.getLogger("NTCDG")
 
+# Retryable HTTP status codes (transient rate-limit or upstream gateway errors)
+RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
 
 # ==================== RETRY DECORATOR ====================
 def retry_on_failure(max_retries: int = 2, delay: float = 1.5, backoff: float = 2.0):
     """
     Retry decorator with exponential backoff and 429 rate-limit handling.
+    Non-retryable client HTTP errors (400/401/402/403/404/422) raise immediately.
 
     Args:
         max_retries: Maximum number of retry attempts.
@@ -183,10 +188,15 @@ def retry_on_failure(max_retries: int = 2, delay: float = 1.5, backoff: float = 
                     return func(*args, **kwargs)
                 except Exception as e:
                     last_exception = e
+                    resp = getattr(e, "response", None)
+                    status = getattr(resp, "status_code", 0) if resp is not None else 0
+
+                    # Never waste retries on permanent client errors (auth/billing/validation)
+                    if 400 <= status < 500 and status not in RETRYABLE_STATUS_CODES:
+                        raise
 
                     # Handle 429 rate-limit: respect Retry-After header
-                    resp = getattr(e, "response", None)
-                    if resp is not None and getattr(resp, "status_code", 0) == 429:
+                    if status == 429 and resp is not None:
                         retry_after = resp.headers.get("Retry-After")
                         if retry_after:
                             with contextlib.suppress(ValueError, TypeError):

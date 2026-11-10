@@ -10,7 +10,7 @@ import re
 import time
 from typing import Any
 
-from .config import HAS_TQDM, Config, logger, requests, retry_on_failure
+from .config import HAS_TQDM, Config, logger, requests
 
 if HAS_TQDM:
     from tqdm import tqdm
@@ -1655,7 +1655,7 @@ def load_symbols_config(symbols_file: str = None) -> dict[str, Any]:
     # Try explicit symbols file
     if symbols_file and os.path.exists(symbols_file):
         try:
-            with open(symbols_file) as f:
+            with open(symbols_file, encoding="utf-8") as f:
                 config = json.load(f)
             if "symbols" in config and isinstance(config["symbols"], list):
                 logger.info(f"Loaded {len(config['symbols'])} symbols from {symbols_file}")
@@ -1669,7 +1669,7 @@ def load_symbols_config(symbols_file: str = None) -> dict[str, Any]:
     legacy_path = os.path.join("custom_elements", "elements_config.json")
     if os.path.exists(legacy_path):
         try:
-            with open(legacy_path) as f:
+            with open(legacy_path, encoding="utf-8") as f:
                 legacy = json.load(f)
             symbols = []
             for name, filename in legacy.items():
@@ -1761,14 +1761,13 @@ def generate_symbol_images(
 
     # Save manifest so symbols can be reused later
     manifest_path = os.path.join(symbols_dir, "symbols_manifest.json")
-    with open(manifest_path, "w") as f:
-        json.dump(symbols_config, f, indent=2)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(symbols_config, f, indent=2, ensure_ascii=False)
     logger.info(f"Symbol manifest saved: {manifest_path}")
 
     return symbols_config
 
 
-@retry_on_failure(max_retries=2, delay=2.0)
 def _generate_single_symbol(
     prompt: str,
     name: str,
@@ -1783,16 +1782,14 @@ def _generate_single_symbol(
 
     time.sleep(rate_limit)
 
-    from .venice import _build_image_request, _extract_image_b64
-    resp = requests.post(
+    from .venice import _build_image_request, _extract_image_b64, venice_post
+    resp = venice_post(
         Config.VENICE_IMAGE_URL,
-        headers={"Authorization": f"Bearer {api_key}"},
-        json=_build_image_request(
-            model, prompt, "1024x1024", Config.DEFAULT_NEGATIVE_PROMPT,
-        ),
+        api_key,
+        _build_image_request(model, prompt, "1024x1024", Config.DEFAULT_NEGATIVE_PROMPT),
         timeout=180,
+        initial_delay=2.0,
     )
-    resp.raise_for_status()
     data = resp.json()
 
     b64 = _extract_image_b64(data)

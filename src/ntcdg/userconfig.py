@@ -30,21 +30,23 @@ RC_PATHS = [
 def _parse_rc_file(path: str) -> dict[str, str]:
     """Parse a simple key: value config file (YAML-lite).
 
-    Supports both ':' and '=' as delimiters:
+    Supports both ':' and '=' as delimiters, choosing whichever appears first
+    so Windows drive paths like ``default_font = C:\\Fonts\\georgia.ttf`` parse cleanly:
         venice_api_key: sk-xxx
         venice_api_key = sk-xxx
     """
     config: dict[str, str] = {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                # Support both : and = as delimiters
-                if "=" in line and ":" not in line:
+                eq_idx = line.find("=")
+                colon_idx = line.find(":")
+                if eq_idx != -1 and (colon_idx == -1 or eq_idx < colon_idx):
                     key, _, value = line.partition("=")
-                elif ":" in line:
+                elif colon_idx != -1:
                     key, _, value = line.partition(":")
                 else:
                     continue
@@ -149,7 +151,7 @@ def create_sample_config():
 # API rate limit (seconds between calls)
 # rate_limit: 1.5
 """
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(sample)
     print(f"Created sample config: {path}")
     print("Edit it to set your defaults.")

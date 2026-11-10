@@ -53,7 +53,7 @@ SETTINGS_FILE = DECKS_DIR / "ntcdg_settings.json"
 
 def load_settings():
     if SETTINGS_FILE.exists():
-        with open(SETTINGS_FILE) as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {
         "venice_api_key": "",
@@ -69,7 +69,7 @@ def load_settings():
 
 def save_settings(settings: dict):
     DECKS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_FILE, "w") as f:
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
 
 
