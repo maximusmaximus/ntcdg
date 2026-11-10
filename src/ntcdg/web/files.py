@@ -16,6 +16,8 @@ import json
 import os
 import re
 import secrets
+import threading
+from collections import OrderedDict
 from collections.abc import Iterable
 from typing import Any
 
@@ -25,7 +27,7 @@ from . import namespace as ns
 
 UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,40}$")
 SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,200}$")
-CALIBRATION_RE = re.compile(r"^CALIBRATION_[a-z0-9]+_[a-z_]+\.pdf$")
+CALIBRATION_RE = re.compile(r"^CALIBRATION_[a-z0-9]+_[a-z0-9_]+\.pdf$")
 IMAGE_FORMATS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif", "BMP": ".bmp"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 MAX_IMAGE_PIXELS = 40_000_000
@@ -84,8 +86,8 @@ def _new_upload_id() -> str:
 
 def save_image_upload(db, user: dict[str, Any], original_name: str, data: bytes,
                       max_bytes: int) -> dict[str, Any]:
-    """Validate (real image, allowed format, size) and store an image upload."""
-    from PIL import Image
+    """Validate, transpose EXIF orientation, strip metadata, and store an image upload."""
+    from PIL import Image, ImageOps
 
     if not data:
         raise FileInputError("The uploaded file is empty.")
@@ -103,15 +105,38 @@ def save_image_upload(db, user: dict[str, Any], original_name: str, data: bytes,
     if width * height > MAX_IMAGE_PIXELS:
         raise FileInputError("Image dimensions are too large.")
 
+    # Re-encode non-animated images after applying EXIF orientation so GPS/camera
+    # metadata is stripped and rotated phone photos render upright everywhere.
+    clean_bytes = data
+    try:
+        with Image.open(io.BytesIO(data)) as im2:
+            if not getattr(im2, "is_animated", False):
+                transposed = ImageOps.exif_transpose(im2)
+                transposed.info.pop("exif", None)
+                save_kwargs: dict[str, Any] = {}
+                if fmt == "JPEG":
+                    if transposed.mode not in ("RGB", "L"):
+                        transposed = transposed.convert("RGB")
+                    save_kwargs = {"quality": 92, "optimize": True}
+                elif fmt == "WEBP":
+                    save_kwargs = {"quality": 92}
+                buf = io.BytesIO()
+                transposed.save(buf, format=fmt, **save_kwargs)
+                candidate = buf.getvalue()
+                if candidate and len(candidate) <= max_bytes:
+                    clean_bytes = candidate
+    except Exception:
+        clean_bytes = data
+
     upload_id = _new_upload_id()
     filename = upload_id + IMAGE_FORMATS[fmt]
     folder = uploads_dir(user["id"])
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(folder, filename), "wb") as f:
-        f.write(data)
+        f.write(clean_bytes)
     name = os.path.basename(original_name or "image")[:120] or "image"
-    db.add_upload(upload_id, user["id"], "image", name, filename, len(data))
-    return {"id": upload_id, "kind": "image", "name": name, "size": len(data),
+    db.add_upload(upload_id, user["id"], "image", name, filename, len(clean_bytes))
+    return {"id": upload_id, "kind": "image", "name": name, "size": len(clean_bytes),
             "ref": f"upload:{upload_id}", "url": f"/uploads/{upload_id}"}
 
 
@@ -420,26 +445,32 @@ def resolve_owned_file(user: dict[str, Any], deck: str, kind: str, name: str) ->
 
 # ==================== THUMBNAILS & QR ====================
 
-_THUMB_CACHE: dict[tuple[str, float, int], bytes] = {}
+_THUMB_CACHE: OrderedDict[tuple[str, float, int], bytes] = OrderedDict()
+_THUMB_LOCK = threading.Lock()
+_THUMB_MAX_ENTRIES = 512
 
 
 def thumbnail_bytes(path: str, max_side: int = 360) -> bytes:
-    """Small JPEG of an image (cached by path + mtime)."""
+    """Small JPEG of an image (thread-safe bounded LRU cached by path + mtime)."""
     from PIL import Image
 
     key = (_real(path), os.path.getmtime(path), max_side)
-    cached = _THUMB_CACHE.get(key)
-    if cached is not None:
-        return cached
+    with _THUMB_LOCK:
+        cached = _THUMB_CACHE.get(key)
+        if cached is not None:
+            _THUMB_CACHE.move_to_end(key)
+            return cached
     with Image.open(path) as im:
         im = im.convert("RGB")
         im.thumbnail((max_side, max_side))
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=82, optimize=True)
     data = buf.getvalue()
-    if len(_THUMB_CACHE) > 512:
-        _THUMB_CACHE.clear()
-    _THUMB_CACHE[key] = data
+    with _THUMB_LOCK:
+        _THUMB_CACHE[key] = data
+        _THUMB_CACHE.move_to_end(key)
+        while len(_THUMB_CACHE) > _THUMB_MAX_ENTRIES:
+            _THUMB_CACHE.popitem(last=False)
     return data
 
 

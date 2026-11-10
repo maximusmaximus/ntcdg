@@ -9,6 +9,7 @@ from typing import Any
 from .config import HAS_REPORTLAB, HAS_TQDM, Config, logger
 from .models import Card
 from .overlay import compose_card, get_card_number_text
+from .runtime import check_cancelled, current_event_sink
 from .storage import (
     deck_images_dir,
     load_deck,
@@ -611,7 +612,6 @@ def generate_deck(
     by the callback are logged and never abort generation.
     """
     if on_event is None:
-        from .runtime import current_event_sink
         on_event = current_event_sink()
 
     def emit(event_type: str, **payload: Any) -> None:
@@ -843,6 +843,7 @@ def generate_deck(
         iterator = tqdm(iterator, desc="Generating Deck", unit="card", ncols=110)
 
     for i in iterator:
+        check_cancelled()
         position = i + 1
         card_def = card_defs[i]
         if HAS_TQDM:

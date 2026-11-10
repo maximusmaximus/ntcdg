@@ -44,7 +44,7 @@
     if (section) section.hidden = !text;
   }
 
-  function render(c) {
+  function render(c, pushHistory) {
     var img = $("image");
     var placeholder = $("noimage");
     if (img) {
@@ -83,7 +83,9 @@
     var canonical = document.querySelector('link[rel="canonical"]');
     if (canonical && c.canonical_url) canonical.href = c.canonical_url;
     document.title = c.title + " · " + c.deck_title;
-    try { history.replaceState({ slug: c.card_slug }, "", c.url); } catch (e) { /* ignore */ }
+    if (pushHistory) {
+      try { history.pushState({ slug: c.card_slug }, "", c.url); } catch (e) { /* ignore */ }
+    }
   }
 
   function go(dir) {
@@ -94,7 +96,7 @@
     busy = true;
     root.classList.remove("slide-next", "slide-prev");
     load(slug).then(function (c) {
-      render(c);
+      render(c, true);
       void root.offsetWidth; // restart the CSS animation
       root.classList.add(dir > 0 ? "slide-next" : "slide-prev");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -104,6 +106,24 @@
       if (link) window.location.href = link.href;
     }).then(function () { busy = false; });
   }
+
+  try {
+    history.replaceState({ slug: root.getAttribute("data-card-slug") || "" }, "", window.location.href);
+  } catch (e) { /* ignore */ }
+
+  window.addEventListener("popstate", function (ev) {
+    var slug = (ev.state && ev.state.slug) || "";
+    if (!slug) {
+      var parts = window.location.pathname.replace(/\/+$/, "").split("/");
+      slug = parts[parts.length - 1] || "";
+    }
+    if (!slug || slug === root.getAttribute("data-card-slug")) return;
+    load(slug).then(function (c) {
+      render(c, false);
+      prefetch(c.next_card_slug);
+      prefetch(c.prev_card_slug);
+    }).catch(function () { window.location.reload(); });
+  });
 
   // Buttons
   ["prev", "next"].forEach(function (name) {

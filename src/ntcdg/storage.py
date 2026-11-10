@@ -290,7 +290,7 @@ _ARTIFACT_SUFFIX_RE = re.compile(
     r"|BOOKLET\.pdf"
     r"|MASTER\.xlsx"
     r"|BUNDLE\.zip"
-    r"|CALIBRATION_[a-z0-9]+(?:_[a-z_]+)?\.pdf"
+    r"|CALIBRATION_[a-z0-9]+(?:_[a-z0-9_]+)?\.pdf"
     r")$"
 )
 

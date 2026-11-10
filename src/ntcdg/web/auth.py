@@ -8,7 +8,7 @@ import hmac
 import secrets
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -140,34 +140,64 @@ async def check_csrf_form(request: Request) -> dict[str, Any]:
 # ==================== LOGIN RATE LIMIT ====================
 
 class LoginRateLimiter:
-    """In-memory sliding window of failed logins per (username, client IP)."""
+    """Bounded in-memory sliding window of failed attempts per (username, IP) and per IP."""
 
-    def __init__(self, max_failures: int = 5, window_seconds: int = 300):
+    MAX_KEYS = 10_000
+
+    def __init__(
+        self,
+        max_failures: int = 5,
+        window_seconds: int = 300,
+        ip_max_failures: int | None = None,
+    ):
         self.max_failures = max_failures
+        self.ip_max_failures = ip_max_failures if ip_max_failures is not None else max(20, max_failures * 4)
         self.window = window_seconds
-        self._failures: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+        self._failures: dict[tuple[str, str], deque[float]] = {}
         self._lock = threading.Lock()
 
-    def _prune(self, key: tuple[str, str], now: float) -> deque[float]:
-        q = self._failures[key]
+    def _prune(self, key: tuple[str, str], now: float) -> deque[float] | None:
+        q = self._failures.get(key)
+        if q is None:
+            return None
         while q and now - q[0] > self.window:
             q.popleft()
+        if not q:
+            self._failures.pop(key, None)
+            return None
         return q
+
+    def _append(self, key: tuple[str, str], now: float) -> None:
+        q = self._prune(key, now)
+        if q is None:
+            if len(self._failures) >= self.MAX_KEYS:
+                oldest = next(iter(self._failures))
+                self._failures.pop(oldest, None)
+            q = deque()
+            self._failures[key] = q
+        q.append(now)
 
     def retry_after(self, username: str, ip: str) -> int:
         """Seconds until another attempt is allowed (0 = allowed now)."""
-        key = (username.lower(), ip)
+        user_key = (username.lower(), ip)
+        ip_key = ("__ip__", ip)
         now = time.monotonic()
         with self._lock:
-            q = self._prune(key, now)
-            if len(q) < self.max_failures:
-                return 0
-            return max(1, int(self.window - (now - q[0])) + 1)
+            wait = 0
+            q_user = self._prune(user_key, now)
+            if q_user is not None and len(q_user) >= self.max_failures:
+                wait = max(wait, max(1, int(self.window - (now - q_user[0])) + 1))
+            q_ip = self._prune(ip_key, now)
+            if q_ip is not None and len(q_ip) >= self.ip_max_failures:
+                wait = max(wait, max(1, int(self.window - (now - q_ip[0])) + 1))
+            return wait
 
     def record_failure(self, username: str, ip: str) -> None:
-        key = (username.lower(), ip)
+        now = time.monotonic()
         with self._lock:
-            self._prune(key, time.monotonic()).append(time.monotonic())
+            self._append((username.lower(), ip), now)
+            if username.lower() != "__ip__":
+                self._append(("__ip__", ip), now)
 
     def reset(self, username: str, ip: str) -> None:
         with self._lock:

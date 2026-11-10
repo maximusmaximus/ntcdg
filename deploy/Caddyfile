@@ -1,0 +1,38 @@
+# Production Caddy v2 configuration for NTCDG Web (`decks.grok.me`)
+#
+# Place at /etc/caddy/Caddyfile (or import from your main Caddyfile) and reload:
+#   sudo systemctl reload caddy
+
+decks.grok.me {
+	encode zstd gzip
+
+	# Protect against oversized uploads before they reach uvicorn
+	request_body {
+		max_size 25MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		-Server
+	}
+
+	# Zero-buffering reverse proxy for Server-Sent Events (/jobs/*/events)
+	@sse path /jobs/*/events
+	handle @sse {
+		reverse_proxy 127.0.0.1:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8000
+	}
+}
+
+# Optional wildcard subdomain block if switching NTCDG_PUBLIC_BASE_URL to
+# `https://{deck}.decks.grok.me` (requires DNS-01 ACME challenge plugin for *.decks.grok.me):
+#
+# *.decks.grok.me {
+# 	encode zstd gzip
+# 	reverse_proxy 127.0.0.1:8000
+# }

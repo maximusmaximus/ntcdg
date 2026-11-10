@@ -1,0 +1,24 @@
+[Unit]
+Description=NTCDG Web Application & Public Card Viewer (decks.grok.me)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ntcdg
+Group=ntcdg
+WorkingDirectory=/var/lib/ntcdg
+EnvironmentFile=/etc/ntcdg/ntcdg.env
+ExecStart=/opt/ntcdg/.venv/bin/ntcdg-web --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=on-failure
+RestartSec=3
+
+# Process & filesystem hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ntcdg
+
+[Install]
+WantedBy=multi-user.target

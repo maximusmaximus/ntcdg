@@ -164,9 +164,20 @@
     host.textContent = "";
     var head = el("p", { className: "job-head" });
     var status = statusBadge("queued");
+    var cancelBtn = el("button", { type: "button", className: "btn small", text: "Cancel" });
+    cancelBtn.addEventListener("click", function () {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "Cancelling…";
+      fetch("/jobs/" + jobId + "/cancel", {
+        method: "POST", credentials: "same-origin",
+        headers: { "X-CSRF-Token": CSRF, Accept: "application/json" },
+      }).catch(function () { cancelBtn.disabled = false; cancelBtn.textContent = "Cancel"; });
+    });
     head.appendChild(status);
     head.appendChild(document.createTextNode(" "));
     head.appendChild(el("a", { href: "/jobs/" + jobId + "/view", text: "Job page" }));
+    head.appendChild(document.createTextNode(" "));
+    head.appendChild(cancelBtn);
     var progress = el("progress", { max: 1, value: 0, hidden: true });
     var progressLabel = el("span", { className: "muted small" });
     var gallery = el("div", { className: "job-gallery" });
@@ -186,6 +197,7 @@
     function setStatus(s) {
       status.className = "status s-" + s;
       status.textContent = s;
+      if (["done", "error", "interrupted", "cancelled"].indexOf(s) >= 0) cancelBtn.hidden = true;
     }
     function addEvent(e) {
       var type = e.type || "event";
@@ -215,15 +227,17 @@
       (u.events || []).forEach(addEvent);
       seenEvents += (u.events || []).length;
       if (u.log) {
-        seenLog += u.log.length;
+        if (typeof u.log_total === "number") seenLog = u.log_total;
+        else seenLog += u.log.length;
         var atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
         log.textContent += u.log;
         if (atBottom) log.scrollTop = log.scrollHeight;
       }
-      if (u.output !== null && u.output !== undefined && !finished) finish(u);
+      if ((u.output !== null && u.output !== undefined || u.status === "cancelled") && !finished) finish(u);
     }
     function finish(u) {
       finished = true;
+      cancelBtn.hidden = true;
       if (es) { es.close(); es = null; }
       if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
       outBox.textContent = "";
@@ -243,7 +257,7 @@
         if (v.error && !v.status) { setStatus("error"); outBox.textContent = v.error; return; }
         var terminal = ["done", "error", "interrupted", "cancelled"].indexOf(v.status) >= 0;
         if (v.deck) host.setAttribute("data-deck", v.deck);
-        apply({ status: v.status, events: v.events, log: v.log, output: terminal ? v.output : null, error: v.error, deck: v.deck });
+        apply({ status: v.status, events: v.events, log: v.log, log_total: v.log_total, output: terminal ? v.output : null, error: v.error, deck: v.deck });
         if (terminal && !finished) finish(v);
         if (!finished) pollTimer = setTimeout(poll, 1500);
       }).catch(function () { if (!finished) pollTimer = setTimeout(poll, 3000); });
