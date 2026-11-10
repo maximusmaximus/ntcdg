@@ -69,7 +69,11 @@ def card_slug(card: Any) -> str:
     numeric prefix anyway.
     """
     position = int(getattr(card, "position", 0) or 0)
-    title = getattr(card, "title", "") or "card"
+    title = (
+        getattr(card, "canonical_title", None)
+        or getattr(card, "title", "")
+        or "card"
+    )
     return f"{position:02d}-{slugify(title, max_len=48, fallback='card')}"
 
 

@@ -63,6 +63,8 @@ class Config:
     DEFAULT_IMAGE_MODEL = "qwen-image-3-pro"
     # Image edit: qwen-image-3-pro — high-quality inpainting/style transfer via /image/edit
     DEFAULT_EDIT_MODEL = "qwen-image-3-pro"
+    # Multi-reference edit: nano-banana-pro-edit — layered reference compositing (/image/multi-edit)
+    DEFAULT_MULTI_EDIT_MODEL = "nano-banana-pro-edit"
     # Vision: qwen3-vl-235b-a22b — native multimodal vision model for artwork and symbol analysis
     DEFAULT_VISION_MODEL = "qwen3-vl-235b-a22b"
     # Image size: 768x1280 — exact 3:5 tarot bleed ratio (3.0" x 5.0") within Venice max (1280)
@@ -81,6 +83,7 @@ class Config:
     ]
     SUPPORTED_EDIT_MODELS = [
         "qwen-image-3-pro",
+        "nano-banana-pro-edit",
         "flux-2-max",
         "qwen-image-3",
     ]

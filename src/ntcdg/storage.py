@@ -418,7 +418,25 @@ def edit_card_field(
         return False
 
     old_value = getattr(card, field, "")
-    setattr(card, field, value)
+    if field == "title":
+        if card.title and not card.canonical_title:
+            card.canonical_title = card.title
+        card.title = value
+        if card.venice_title is not None:
+            card.venice_title = value
+        if card.new_title is not None:
+            card.new_title = value
+    elif field == "new_title":
+        card.new_title = value
+        if card.venice_title is not None:
+            card.venice_title = value
+    else:
+        setattr(card, field, value)
+
+    if field in ("title", "new_title", "venice_title"):
+        from .overlay import recompose_card
+        recompose_card(card)
+
     save_deck(deck, deck_name)
     print(f"Updated card {card_position} [{field}]:")
     print(f"  Old: {(old_value or '(empty)')[:80]}")
@@ -447,10 +465,16 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
             print("Cancelled.")
             return False
 
-    # Remove card images
+    # Remove card images (including preserved unframed sidecars)
+    from .overlay import unframed_image_path
+
     for card in deck:
-        if card.image_path and os.path.exists(str(card.image_path)):
-            os.remove(card.image_path)
+        if card.image_path:
+            if os.path.exists(str(card.image_path)):
+                os.remove(card.image_path)
+            raw_sidecar = card.raw_image_path or unframed_image_path(str(card.image_path))
+            if raw_sidecar and os.path.exists(raw_sidecar):
+                os.remove(raw_sidecar)
 
     # Remove deck files (JSON, PDFs, spreadsheet, bundle)
     for filepath in deck_artifact_files(deck_name, include_json=True, include_bundle=True):
@@ -464,8 +488,11 @@ def delete_deck(deck_name: str, confirm: bool = True) -> bool:
     if back and os.path.exists(back):
         os.remove(back)
 
-    # Remove the deck's own image folder if nothing else is left in it
+    # Remove the deck's own image folder (and empty _unframed dir) if nothing else is left in it
     img_dir = deck_images_dir(deck_name)
+    unframed_dir = os.path.join(img_dir, "_unframed")
+    if os.path.isdir(unframed_dir) and not os.listdir(unframed_dir):
+        os.rmdir(unframed_dir)
     if os.path.isdir(img_dir) and not os.listdir(img_dir):
         os.rmdir(img_dir)
 
@@ -501,6 +528,8 @@ def clone_deck(source_name: str, dest_name: str) -> bool:
         new_card = copy.deepcopy(card)
 
         if card.image_path and os.path.exists(str(card.image_path)):
+            from .overlay import unframed_image_path
+
             old_basename = os.path.basename(card.image_path)
             new_basename = old_basename  # keep same filename
             new_dir = os.path.join(Config.IMAGES_DIR, dest_name)
@@ -508,6 +537,13 @@ def clone_deck(source_name: str, dest_name: str) -> bool:
             new_path = os.path.join(new_dir, new_basename)
             shutil.copy2(card.image_path, new_path)
             new_card.image_path = new_path
+            old_raw = card.raw_image_path or unframed_image_path(str(card.image_path))
+            if old_raw and os.path.exists(old_raw):
+                new_raw = unframed_image_path(new_path)
+                os.makedirs(os.path.dirname(new_raw), exist_ok=True)
+                shutil.copy2(old_raw, new_raw)
+                if card.raw_image_path:
+                    new_card.raw_image_path = new_raw
 
         cloned_deck.append(new_card)
 
